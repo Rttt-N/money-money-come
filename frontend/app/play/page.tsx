@@ -49,7 +49,6 @@ export default function PlayPage() {
   const canSubmit =
     !!address &&
     isOpen &&
-    !alreadyIn &&
     isValidAmount &&
     hasEnoughBalance &&
     step === "form";
@@ -133,14 +132,18 @@ export default function PlayPage() {
       </div>
 
       {alreadyIn && (
-        <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-amber-400">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-emerald-400">
+          <Info className="mt-0.5 h-5 w-5 shrink-0" />
           <div>
-            <div className="font-semibold">Already in this round</div>
+            <div className="font-semibold">Active Position — Top Up</div>
             <div className="text-sm opacity-80">
-              You have ${formatUsdc(userInfo!.principal)} deposited.{" "}
+              You have ${formatUsdc(userInfo!.principal)} deposited
+              {userInfo!.tier1Amount > 0n && ` | T1: $${formatUsdc(userInfo!.tier1Amount)}`}
+              {userInfo!.tier2Amount > 0n && ` | T2: $${formatUsdc(userInfo!.tier2Amount)}`}
+              {userInfo!.tier3Amount > 0n && ` | T3: $${formatUsdc(userInfo!.tier3Amount)}`}.
+              Add more funds below to increase your weight.{" "}
               <Link href="/dashboard" className="underline">
-                View your dashboard
+                View dashboard
               </Link>
             </div>
           </div>
@@ -310,9 +313,9 @@ export default function PlayPage() {
                   Entering game…
                 </span>
               ) : needsApprove ? (
-                "Approve & Enter"
+                alreadyIn ? "Approve & Top Up" : "Approve & Enter"
               ) : (
-                "Enter Game"
+                alreadyIn ? "Top Up Deposit" : "Enter Game"
               )}
             </button>
           </div>

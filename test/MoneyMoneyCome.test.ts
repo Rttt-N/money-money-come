@@ -135,14 +135,16 @@ describe("MoneyMoneyCome", async function () {
   // 2. enterGame — 存款逻辑
   // ════════════════════════════════════════════════════════════════════════
   describe("enterGame", async function () {
-    it("should update user principal and tier correctly", async function () {
+    it("should update user principal and tier amounts correctly", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 2);
 
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, amount);
-      assert.equal(info.tier, 2);
+      assert.equal(info.tier1Amount, 0n);
+      assert.equal(info.tier2Amount, amount);
+      assert.equal(info.tier3Amount, 0n);
     });
 
     it("should mint an NFT ticket on deposit", async function () {
@@ -185,21 +187,22 @@ describe("MoneyMoneyCome", async function () {
       });
     });
 
-    it("should revert if user tries to deposit twice in same round", async function () {
+    it("should allow top-up deposit in same round (blended per-tier amounts)", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 1);
 
-      await ctx.mockUSDC.write.mint([ctx.user1.account.address, amount]);
-      await ctx.mockUSDC.write.approve([ctx.mmc.address, amount], {
-        account: ctx.user1.account,
-      });
+      // Top up with another 100 USDC at Tier 2 (each deposit keeps its own tier)
+      await enterGame(ctx, ctx.user1, amount, 2);
 
-      await assert.rejects(async () => {
-        await ctx.mmc.write.enterGame([amount, 1, 0n], {
-          account: ctx.user1.account,
-        });
-      });
+      const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(info.principal, 200n * ONE_USDC);
+      assert.equal(info.tier1Amount, 100n * ONE_USDC);
+      assert.equal(info.tier2Amount, 100n * ONE_USDC);
+      assert.equal(info.tier3Amount, 0n);
+
+      // Blended weight: (100*1000 + 100*5000) / 10000 = 60 USDC
+      assert.equal(info.weightBps, 60n * ONE_USDC);
     });
   });
 
@@ -332,6 +335,289 @@ describe("MoneyMoneyCome", async function () {
       // ✅ 新一轮已自动开始（currentRound 从 1 变为 2）
       const newRound = await ctx.mmc.read.currentRound();
       assert.equal(newRound, 2n);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 4b. Rollover — 跨轮连续参与
+  //     存款 → 完成一轮 → 验证自动加入下一轮（无需重新存款）
+  // ════════════════════════════════════════════════════════════════════════
+  describe("Rollover", async function () {
+    it("should auto-enroll user into next round after settlement", async function () {
+      const ctx = await deployAll();
+      const amount = 200n * ONE_USDC;
+      const yieldAmount = 20n * ONE_USDC;
+
+      // Round 1: user1 deposits as Tier 3
+      await enterGame(ctx, ctx.user1, amount, 3);
+
+      // Complete round 1
+      await simulateYield(ctx, yieldAmount);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+
+      // Verify new round started
+      const newRound = await ctx.mmc.read.currentRound();
+      assert.equal(newRound, 2n);
+
+      // Verify user is auto-enrolled in round 2
+      const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(info.principal, amount); // Principal preserved
+      assert.equal(info.roundJoined, 2n);   // Rolled into round 2
+      assert.equal(info.loyaltyRounds, 1n); // Loyalty incremented
+
+      // Verify round 2 has the user's principal and weight
+      const roundInfo = await ctx.mmc.read.getCurrentRoundInfo();
+      assert.equal(roundInfo.totalPrincipal, amount);
+      assert.ok(roundInfo.totalWeight > 0n);
+
+      // Verify participants list includes the user
+      const participants = await ctx.mmc.read.getRoundParticipants([2n]);
+      assert.equal(participants.length, 1);
+      assert.equal(
+        participants[0].toLowerCase(),
+        ctx.user1.account.address.toLowerCase(),
+      );
+    });
+
+    it("should give loyalty bonus weight after rollover", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+
+      // Round 1: Tier 3, base weight = 100 USDC, loyalty mult = 1.0
+      await enterGame(ctx, ctx.user1, amount, 3);
+      const infoR1 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR1.weightBps, 100n * ONE_USDC); // 100 * 1.0 * 1.0
+
+      // Complete round 1
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+
+      // Round 2: loyalty = 1 → mult = 1.05, weight = 100 * 1.0 * 1.05 = 105
+      const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR2.loyaltyRounds, 1n);
+      assert.equal(infoR2.weightBps, 105n * ONE_USDC);
+    });
+
+    it("should preserve blended tier amounts through rollover", async function () {
+      const ctx = await deployAll();
+
+      // Round 1: 60 USDC at Tier 1 + 40 USDC at Tier 3
+      await enterGame(ctx, ctx.user1, 60n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user1, 40n * ONE_USDC, 3);
+
+      const infoR1 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR1.tier1Amount, 60n * ONE_USDC);
+      assert.equal(infoR1.tier3Amount, 40n * ONE_USDC);
+      // Blended weight: (60*1000 + 40*10000) / 10000 = 46 USDC
+      assert.equal(infoR1.weightBps, 46n * ONE_USDC);
+
+      // Complete round 1
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+
+      // Round 2: tier amounts preserved, weight recalculated with loyalty
+      const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR2.tier1Amount, 60n * ONE_USDC);
+      assert.equal(infoR2.tier3Amount, 40n * ONE_USDC);
+      assert.equal(infoR2.principal, 100n * ONE_USDC);
+      assert.equal(infoR2.loyaltyRounds, 1n);
+      // Weight with loyalty: 46 * 1.05 = 48.3 USDC
+      assert.equal(infoR2.weightBps, 48300000n); // 48.3 * 1e6
+    });
+
+    it("should accumulate loyalty across multiple rounds (round 1 → 2 → 3)", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+
+      // Round 1
+      await enterGame(ctx, ctx.user1, amount, 3);
+
+      // Complete round 1
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+
+      // Round 2: loyalty = 1
+      const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR2.loyaltyRounds, 1n);
+      assert.equal(infoR2.weightBps, 105n * ONE_USDC); // 100 * 1.05
+
+      // Complete round 2
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([2n, 0n]);
+
+      // Round 3: loyalty = 2 → mult = 1.10
+      const infoR3 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR3.loyaltyRounds, 2n);
+      assert.equal(infoR3.roundJoined, 3n);
+      assert.equal(infoR3.weightBps, 110n * ONE_USDC); // 100 * 1.10
+    });
+
+    it("should reset loyalty to 0 when user fully withdraws and re-enters", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+
+      // Round 1: deposit at Tier 3
+      await enterGame(ctx, ctx.user1, amount, 3);
+
+      // Complete round 1 → loyalty becomes 1
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+
+      const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoR2.loyaltyRounds, 1n);
+
+      // Full withdraw in round 2 → loyalty resets to 0
+      await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
+      const afterWithdraw = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(afterWithdraw.loyaltyRounds, 0n);
+
+      // Re-enter in round 2 → should have loyalty 0, no bonus
+      await enterGame(ctx, ctx.user1, amount, 3);
+      const afterReenter = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(afterReenter.loyaltyRounds, 0n);
+      assert.equal(afterReenter.weightBps, 100n * ONE_USDC); // 100 * 1.0 * 1.0 (no loyalty bonus)
+    });
+
+    it("should NOT rollover user who fully withdrew", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+
+      await enterGame(ctx, ctx.user1, amount, 3);
+      // Withdraw everything during OPEN
+      await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
+
+      // Complete round 1 (need another participant)
+      await enterGame(ctx, ctx.user2, amount, 3);
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+
+      // Round 2: user1 should NOT be enrolled
+      const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(info.principal, 0n);
+      assert.equal(info.roundJoined, 1n); // Not updated to round 2
+
+      const participants = await ctx.mmc.read.getRoundParticipants([2n]);
+      // Only user2 should be rolled over
+      const user1InRound2 = participants.some(
+        (p: string) => p.toLowerCase() === ctx.user1.account.address.toLowerCase(),
+      );
+      assert.equal(user1InRound2, false);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 4c. Blended Tier — 混合 tier 权重和利息计算
+  // ════════════════════════════════════════════════════════════════════════
+  describe("Blended Tier", async function () {
+    it("should calculate blended weight from multiple tiers", async function () {
+      const ctx = await deployAll();
+
+      // 50 USDC at Tier 1 (weight mult 0.1) + 50 USDC at Tier 3 (weight mult 1.0)
+      await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 3);
+
+      const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(info.principal, 100n * ONE_USDC);
+      // Blended weight: (50*1000 + 50*10000) / 10000 = 55 USDC
+      assert.equal(info.weightBps, 55n * ONE_USDC);
+    });
+
+    it("should harvest yield using blended retain rate", async function () {
+      const ctx = await deployAll();
+
+      // 50 USDC at Tier 1 (retain 90%) + 50 USDC at Tier 3 (retain 0%)
+      // Blended retain = (50*9000 + 50*0) / 100 = 4500 bps = 45%
+      await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 3);
+
+      // Simulate 10 USDC yield
+      await simulateYield(ctx, 10n * ONE_USDC);
+
+      // Record user balance before harvest
+      const beforeHarvest = await ctx.mockUSDC.read.balanceOf([
+        ctx.user1.account.address,
+      ]);
+
+      // Trigger harvest via performUpkeep
+      await increaseTime(2);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+
+      // After harvest, user should have received exactly 45% of 10 USDC yield = 4.5 USDC
+      const afterHarvest = await ctx.mockUSDC.read.balanceOf([
+        ctx.user1.account.address,
+      ]);
+      const userReceived = afterHarvest - beforeHarvest;
+
+      // Exact: 4_500_000 (4.5 USDC), allow ±0.01 USDC for ERC4626 rounding
+      const expected = 4_500_000n;
+      const tolerance = 10_000n; // 0.01 USDC
+      assert.ok(
+        userReceived >= expected - tolerance && userReceived <= expected + tolerance,
+        `User should receive ~4.5 USDC retained yield, got ${Number(userReceived) / 1e6}`,
+      );
+
+      // Verify prizePool received the rest (~5.5 USDC)
+      const roundInfo = await ctx.mmc.read.getCurrentRoundInfo();
+      assert.ok(
+        roundInfo.prizePool >= 5_400_000n && roundInfo.prizePool <= 5_600_000n,
+        `Prize pool should be ~5.5 USDC, got ${Number(roundInfo.prizePool) / 1e6}`,
+      );
+    });
+
+    it("should reduce tier amounts and weight proportionally on partial withdrawal", async function () {
+      const ctx = await deployAll();
+
+      // 100 USDC at Tier 1 + 200 USDC at Tier 3
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user1, 200n * ONE_USDC, 3);
+
+      // Before: weight = (100*1000 + 200*10000) / 10000 = 210 USDC
+      const infoBefore = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(infoBefore.weightBps, 210n * ONE_USDC);
+
+      // Withdraw 150 USDC (50% of 300 total)
+      await ctx.mmc.write.withdraw([150n * ONE_USDC], {
+        account: ctx.user1.account,
+      });
+
+      const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(info.principal, 150n * ONE_USDC);
+      // Proportional: tier1 = 100 - (100*150/300) = 50, tier3 = 200 - (200*150/300) = 100
+      assert.equal(info.tier1Amount, 50n * ONE_USDC);
+      assert.equal(info.tier3Amount, 100n * ONE_USDC);
+      // Weight reduced proportionally: 210 - (210*150/300) = 105 USDC
+      assert.equal(info.weightBps, 105n * ONE_USDC);
+    });
+
+    it("should zero all tier amounts on full withdrawal", async function () {
+      const ctx = await deployAll();
+
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user1, 200n * ONE_USDC, 3);
+
+      await ctx.mmc.write.withdraw([300n * ONE_USDC], {
+        account: ctx.user1.account,
+      });
+
+      const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
+      assert.equal(info.principal, 0n);
+      assert.equal(info.tier1Amount, 0n);
+      assert.equal(info.tier2Amount, 0n);
+      assert.equal(info.tier3Amount, 0n);
     });
   });
 

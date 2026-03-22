@@ -42,7 +42,9 @@ export const MMC_ABI = [
         components: [
           { name: "principal", type: "uint256" },
           { name: "vaultShares", type: "uint256" },
-          { name: "tier", type: "uint8" },
+          { name: "tier1Amount", type: "uint256" },
+          { name: "tier2Amount", type: "uint256" },
+          { name: "tier3Amount", type: "uint256" },
           { name: "weightBps", type: "uint256" },
           { name: "loyaltyRounds", type: "uint256" },
           { name: "roundJoined", type: "uint256" },
@@ -275,8 +277,9 @@ export const TICKET_NFT_ABI = [
         type: "tuple",
         components: [
           { name: "roundId", type: "uint256" },
-          { name: "tier", type: "uint8" },
-          { name: "depositAmount", type: "uint256" },
+          { name: "tier1Amount", type: "uint256" },
+          { name: "tier2Amount", type: "uint256" },
+          { name: "tier3Amount", type: "uint256" },
           { name: "weightBasisPts", type: "uint256" },
           { name: "mintedAt", type: "uint256" },
         ],

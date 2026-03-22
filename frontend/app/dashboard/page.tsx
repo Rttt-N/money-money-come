@@ -24,6 +24,7 @@ import {
   Shield,
 } from "lucide-react";
 import Link from "next/link";
+import { TierPieChart } from "@/components/TierPieChart";
 
 const TIER_STYLES: Record<number, { gradient: string; ring: string; label: string; badge: string }> = {
   1: { gradient: "from-blue-500/20 to-cyan-500/20", ring: "border-blue-500/30", label: "The Worker", badge: "🔵" },
@@ -46,8 +47,21 @@ export default function DashboardPage() {
   const roundState = roundInfo?.state ?? 0;
   const isDrawing = roundState === RoundState.DRAWING || roundState === RoundState.LOCKED;
 
-  const tierStyle = isInRound ? TIER_STYLES[userInfo!.tier] ?? TIER_STYLES[1] : null;
-  const tierConfig = isInRound ? TIERS.find((t) => t.id === userInfo!.tier) : null;
+  // Determine dominant tier (highest amount) for card styling
+  const dominantTier = isInRound
+    ? (userInfo!.tier3Amount >= userInfo!.tier2Amount && userInfo!.tier3Amount >= userInfo!.tier1Amount) ? 3
+    : (userInfo!.tier2Amount >= userInfo!.tier1Amount) ? 2
+    : 1
+    : 1;
+  const tierStyle = isInRound ? TIER_STYLES[dominantTier] : null;
+
+  // Compute blended yield retain % for display
+  const blendedYieldRetain = isInRound && userInfo!.principal > 0n
+    ? Number(
+        (userInfo!.tier1Amount * 90n + userInfo!.tier2Amount * 50n + userInfo!.tier3Amount * 0n)
+        / (userInfo!.principal / 100n > 0n ? userInfo!.principal / 100n : 1n)
+      )
+    : 0;
 
   const partialAmountBig = (() => {
     try {
@@ -122,7 +136,7 @@ export default function DashboardPage() {
         </p>
         <div className="flex justify-center gap-4">
           <Link href="/play" className="btn-primary">
-            Enter Next Round
+            Deposit Again
           </Link>
           <button onClick={() => setWithdrawStep("idle")} className="btn-secondary">
             Back to Dashboard
@@ -137,10 +151,10 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-2xl px-6 py-16 text-center">
         <div className="glass-card p-10">
           <div className="mb-4 text-5xl">🎫</div>
-          <h2 className="mb-2 text-xl font-bold text-white">Not in current round</h2>
+          <h2 className="mb-2 text-xl font-bold text-white">No active position</h2>
           <p className="mb-8 text-white/50">
-            You don&apos;t have an active deposit. Join the current round to start earning and
-            playing.
+            Deposit once and your funds automatically roll over into every future round.
+            No need to re-deposit each week!
           </p>
           <Link href="/play" className="btn-primary">
             Join Round #{currentRound?.toString() ?? "…"}
@@ -192,7 +206,11 @@ export default function DashboardPage() {
                   <div className="text-xs font-medium uppercase tracking-widest text-white/40">
                     Your Ticket — Round #{currentRound?.toString()}
                   </div>
-                  <div className="text-lg font-bold text-white">{tierStyle!.label}</div>
+                  <div className="text-lg font-bold text-white">
+                    {[userInfo.tier1Amount, userInfo.tier2Amount, userInfo.tier3Amount].filter(a => a > 0n).length > 1
+                      ? "Mixed Strategy"
+                      : tierStyle!.label}
+                  </div>
                 </div>
               </div>
               {nftBalance !== undefined && nftBalance > 0n && (
@@ -240,18 +258,22 @@ export default function DashboardPage() {
               ))}
             </div>
 
-            {/* Tier breakdown */}
-            {tierConfig && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-400">
-                  Keep {tierConfig.yieldRetain} of yield
-                </span>
-                <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-400">
-                  {tierConfig.yieldPool} goes to pool
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white/60">
-                  {tierConfig.weightMultiplier} weight multiplier
-                </span>
+            {/* Tier distribution breakdown */}
+            {isInRound && (
+              <div className="mt-4 space-y-3">
+                <TierPieChart
+                  tier1Amount={userInfo.tier1Amount}
+                  tier2Amount={userInfo.tier2Amount}
+                  tier3Amount={userInfo.tier3Amount}
+                />
+                <div className="flex gap-2">
+                  <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-400">
+                    Keep ~{blendedYieldRetain.toFixed(0)}% of yield
+                  </span>
+                  <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-400">
+                    ~{(100 - blendedYieldRetain).toFixed(0)}% goes to pool
+                  </span>
+                </div>
               </div>
             )}
           </div>
@@ -298,8 +320,8 @@ export default function DashboardPage() {
               Withdraw Funds
             </div>
             <p className="mb-5 text-xs text-white/40">
-              You can always withdraw your principal. Interest may be penalised if the round
-              is in LOCKED or DRAWING state.
+              Your position rolls over automatically each round. Withdraw anytime — interest
+              may be penalised if the round is in LOCKED or DRAWING state.
             </p>
 
             {/* Full / Partial toggle */}

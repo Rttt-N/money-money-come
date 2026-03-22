@@ -57,7 +57,9 @@ contract MoneyMoneyCome is
     struct UserInfo {
         uint256 principal;
         uint256 vaultShares;
-        uint8   tier;
+        uint256 tier1Amount;
+        uint256 tier2Amount;
+        uint256 tier3Amount;
         uint256 weightBps;
         uint256 loyaltyRounds;
         uint256 roundJoined;
@@ -158,36 +160,54 @@ contract MoneyMoneyCome is
         require(amount >= MIN_DEPOSIT,                          "MMC: below minimum");
         require(tier >= 1 && tier <= 3,                        "MMC: invalid tier");
         require(rounds[currentRound].state == RoundState.OPEN, "MMC: round not open");
-        require(users[msg.sender].principal == 0,              "MMC: already in round");
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
         usdc.approve(address(vault), amount);
         uint256 shares = vault.deposit(amount, address(this));
 
-        TierConfig memory tc = tierConfigs[tier];
-        uint256 baseWeight   = (amount * tc.weightMultiplierBps) / BPS_DENOM;
-        uint256 loyaltyMult  = _loyaltyMultiplier(msg.sender);
-        uint256 finalWeight  = (baseWeight * loyaltyMult) / BPS_DENOM;
+        UserInfo storage u = users[msg.sender];
+        bool alreadyInRound = (u.principal > 0 && u.roundJoined == currentRound);
 
-        users[msg.sender] = UserInfo({
-            principal:     amount,
-            vaultShares:   shares,
-            tier:          tier,
-            weightBps:     finalWeight,
-            loyaltyRounds: users[msg.sender].loyaltyRounds,
-            roundJoined:   currentRound
-        });
+        // Accumulate principal and shares (supports top-up)
+        u.principal   += amount;
+        u.vaultShares += shares;
+        u.roundJoined  = currentRound;
 
-        rounds[currentRound].totalPrincipal += amount;
-        rounds[currentRound].totalWeight    += finalWeight;
-        _roundParticipants[currentRound].push(msg.sender);
+        // Accumulate per-tier amount (each deposit keeps its own tier)
+        if (tier == 1) u.tier1Amount += amount;
+        else if (tier == 2) u.tier2Amount += amount;
+        else u.tier3Amount += amount;
+
+        // Recalculate blended weight from all tier amounts
+        uint256 baseWeight  = _blendedBaseWeight(u);
+        uint256 loyaltyMult = _loyaltyMultiplier(msg.sender);
+        uint256 newWeight   = (baseWeight * loyaltyMult) / BPS_DENOM;
+
+        if (alreadyInRound) {
+            // Top-up: adjust round totals by delta
+            rounds[currentRound].totalPrincipal += amount;
+            rounds[currentRound].totalWeight    += (newWeight - u.weightBps);
+        } else {
+            // New participant this round (fresh or rollover)
+            rounds[currentRound].totalPrincipal += amount;
+            rounds[currentRound].totalWeight    += newWeight;
+            _roundParticipants[currentRound].push(msg.sender);
+        }
+
+        u.weightBps = newWeight;
 
         if (squadId != 0) {
             require(squadRegistry.userSquad(msg.sender) == squadId, "MMC: not in that squad");
         }
 
-        uint256 weightBpsForNFT = amount > 0 ? finalWeight * BPS_DENOM / amount : 0;
-        ticketNFT.mint(msg.sender, currentRound, tier, amount, weightBpsForNFT);
+        // Handle NFT: burn existing ticket for this round (from rollover or previous top-up), then mint updated one
+        uint256 existingTicket = ticketNFT.userRoundTicket(msg.sender, currentRound);
+        if (existingTicket != 0) {
+            ticketNFT.burn(existingTicket);
+        }
+
+        uint256 weightBpsForNFT = u.principal > 0 ? newWeight * BPS_DENOM / u.principal : 0;
+        ticketNFT.mint(msg.sender, currentRound, u.tier1Amount, u.tier2Amount, u.tier3Amount, weightBpsForNFT);
 
         emit GameEntered(msg.sender, currentRound, amount, tier);
     }
@@ -225,17 +245,29 @@ contract MoneyMoneyCome is
             toUser = received;
         }
 
-        // Proportional weight removal; always update u.weightBps so a later full withdraw
-        // does not subtract the original weight again (would underflow totalWeight).
-        uint256 weightToDeduct = (u.weightBps * amount) / u.principal;
+        // Proportional weight and tier amount removal.
+        uint256 originalPrincipal = u.principal;
+        uint256 weightToDeduct = (u.weightBps * amount) / originalPrincipal;
+
+        // Proportional tier amount reduction
+        uint256 t1Deduct = (u.tier1Amount * amount) / originalPrincipal;
+        uint256 t2Deduct = (u.tier2Amount * amount) / originalPrincipal;
+        uint256 t3Deduct = (u.tier3Amount * amount) / originalPrincipal;
 
         u.principal   -= amount;
         u.vaultShares -= sharesToRedeem;
         u.weightBps   -= weightToDeduct;
+        u.tier1Amount -= t1Deduct;
+        u.tier2Amount -= t2Deduct;
+        u.tier3Amount -= t3Deduct;
         rounds[currentRound].totalPrincipal -= amount;
         rounds[currentRound].totalWeight    -= weightToDeduct;
 
         if (u.principal == 0) {
+            // Explicit zero to eliminate rounding dust
+            u.tier1Amount = 0;
+            u.tier2Amount = 0;
+            u.tier3Amount = 0;
             uint256 tokenId = ticketNFT.userRoundTicket(msg.sender, currentRound);
             if (tokenId != 0) ticketNFT.burn(tokenId);
             u.loyaltyRounds = 0;
@@ -328,13 +360,13 @@ contract MoneyMoneyCome is
                 uint256[] memory otherAmounts
             ) = squadRegistry.calcSquadPrize(winner, prize, addrs, weights);
 
-            if (winnerAmount > 0) vault.withdraw(winnerAmount, winner, address(this));
+            if (winnerAmount > 0) usdc.safeTransfer(winner, winnerAmount);
             for (uint256 i; i < otherMembers.length; i++) {
                 if (otherAmounts[i] > 0)
-                    vault.withdraw(otherAmounts[i], otherMembers[i], address(this));
+                    usdc.safeTransfer(otherMembers[i], otherAmounts[i]);
             }
         } else {
-            if (prize > 0) vault.withdraw(prize, winner, address(this));
+            if (prize > 0) usdc.safeTransfer(winner, prize);
         }
 
         for (uint256 i; i < participants.length; i++) {
@@ -349,17 +381,45 @@ contract MoneyMoneyCome is
     // ── Internal ─────────────────────────────────────────────────────────────
 
     function _startNewRound() internal {
+        uint256 prevRound = currentRound;
         currentRound++;
         uint256 start = block.timestamp;
         rounds[currentRound] = RoundInfo({
-            startTime:     start,
-            endTime:       start + ROUND_DURATION,
+            startTime:      start,
+            endTime:        start + ROUND_DURATION,
             totalPrincipal: 0,
-            prizePool:     0,
-            totalWeight:   0,
-            state:         RoundState.OPEN,
-            winner:        address(0)
+            prizePool:      0,
+            totalWeight:    0,
+            state:          RoundState.OPEN,
+            winner:         address(0)
         });
+
+        // ── Rollover: carry over participants who still have principal ────
+        if (prevRound > 0) {
+            address[] storage prev = _roundParticipants[prevRound];
+            for (uint256 i; i < prev.length; i++) {
+                address addr = prev[i];
+                UserInfo storage u = users[addr];
+                if (u.principal == 0) continue;
+
+                // Recalculate blended weight with updated loyalty
+                uint256 baseWeight  = _blendedBaseWeight(u);
+                uint256 loyaltyMult = _loyaltyMultiplier(addr);
+                uint256 newWeight   = (baseWeight * loyaltyMult) / BPS_DENOM;
+
+                u.weightBps   = newWeight;
+                u.roundJoined = currentRound;
+
+                _roundParticipants[currentRound].push(addr);
+                rounds[currentRound].totalPrincipal += u.principal;
+                rounds[currentRound].totalWeight    += newWeight;
+
+                // Mint new NFT ticket for the new round
+                uint256 weightBpsForNFT = newWeight * BPS_DENOM / u.principal;
+                ticketNFT.mint(addr, currentRound, u.tier1Amount, u.tier2Amount, u.tier3Amount, weightBpsForNFT);
+            }
+        }
+
         emit RoundStarted(currentRound, start, start + ROUND_DURATION);
     }
 
@@ -376,18 +436,36 @@ contract MoneyMoneyCome is
             uint256 interest     = currentValue > u.principal ? currentValue - u.principal : 0;
             if (interest == 0) continue;
 
-            TierConfig memory tc = tierConfigs[u.tier];
-            uint256 userKeeps    = (interest * tc.yieldRetainBps) / BPS_DENOM;
+            uint256 retainBps    = _blendedYieldRetainBps(u);
+            uint256 userKeeps    = (interest * retainBps) / BPS_DENOM;
             uint256 toPool       = interest - userKeeps;
 
+            // Redeem ALL interest shares so u.vaultShares only backs principal
+            uint256 sharesToRedeem = vault.previewWithdraw(interest);
+            if (sharesToRedeem > u.vaultShares) sharesToRedeem = u.vaultShares;
+            vault.redeem(sharesToRedeem, address(this), address(this));
+            u.vaultShares -= sharesToRedeem;
+
+            // Send user's retained yield directly
             if (userKeeps > 0) {
-                uint256 sharesToRedeem = vault.previewWithdraw(userKeeps);
-                vault.redeem(sharesToRedeem, addr, address(this));
-                u.vaultShares -= sharesToRedeem;
+                usdc.safeTransfer(addr, userKeeps);
             }
 
             r.prizePool += toPool;
         }
+    }
+
+    function _blendedBaseWeight(UserInfo storage u) internal view returns (uint256) {
+        return (u.tier1Amount * tierConfigs[1].weightMultiplierBps
+              + u.tier2Amount * tierConfigs[2].weightMultiplierBps
+              + u.tier3Amount * tierConfigs[3].weightMultiplierBps) / BPS_DENOM;
+    }
+
+    function _blendedYieldRetainBps(UserInfo storage u) internal view returns (uint256) {
+        if (u.principal == 0) return 0;
+        return (u.tier1Amount * tierConfigs[1].yieldRetainBps
+              + u.tier2Amount * tierConfigs[2].yieldRetainBps
+              + u.tier3Amount * tierConfigs[3].yieldRetainBps) / u.principal;
     }
 
     function _loyaltyMultiplier(address user) internal view returns (uint256) {

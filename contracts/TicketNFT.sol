@@ -14,8 +14,9 @@ contract TicketNFT is ERC721, Ownable {
 
     struct TicketInfo {
         uint256 roundId;        // Which round this ticket belongs to
-        uint8   tier;           // 1 = Worker, 2 = Player, 3 = VIP
-        uint256 depositAmount;  // USDC deposited (6 decimals)
+        uint256 tier1Amount;    // USDC deposited at Tier 1 (Worker)
+        uint256 tier2Amount;    // USDC deposited at Tier 2 (Player)
+        uint256 tier3Amount;    // USDC deposited at Tier 3 (VIP)
         uint256 weightBasisPts; // Probability weight × 10_000 (e.g. 5000 = 0.5×)
         uint256 mintedAt;       // Block timestamp of mint
     }
@@ -36,8 +37,9 @@ contract TicketNFT is ERC721, Ownable {
         address indexed to,
         uint256 indexed tokenId,
         uint256 indexed roundId,
-        uint8   tier,
-        uint256 depositAmount
+        uint256 tier1Amount,
+        uint256 tier2Amount,
+        uint256 tier3Amount
     );
 
     event TicketBurned(uint256 indexed tokenId, address indexed owner);
@@ -53,38 +55,40 @@ contract TicketNFT is ERC721, Ownable {
 
     /**
      * @notice Mint a participation ticket. Called by MoneyMoneyCome on deposit.
-     * @param to            Recipient (the depositor)
-     * @param roundId       Current round identifier
-     * @param tier          1/2/3
-     * @param depositAmount USDC amount in 6-decimal units
-     * @param weightBps     Probability weight in basis points (10_000 = 1.0×)
-     * @return tokenId      Newly minted token ID
+     * @param to          Recipient (the depositor)
+     * @param roundId     Current round identifier
+     * @param tier1Amount USDC deposited at Tier 1 (6 decimals)
+     * @param tier2Amount USDC deposited at Tier 2 (6 decimals)
+     * @param tier3Amount USDC deposited at Tier 3 (6 decimals)
+     * @param weightBps   Probability weight in basis points (10_000 = 1.0×)
+     * @return tokenId    Newly minted token ID
      */
     function mint(
         address to,
         uint256 roundId,
-        uint8   tier,
-        uint256 depositAmount,
+        uint256 tier1Amount,
+        uint256 tier2Amount,
+        uint256 tier3Amount,
         uint256 weightBps
     ) external onlyOwner returns (uint256 tokenId) {
         require(userRoundTicket[to][roundId] == 0, "TicketNFT: already has ticket for this round");
-        require(tier >= 1 && tier <= 3, "TicketNFT: invalid tier");
 
         tokenId = ++_nextTokenId;
 
         tickets[tokenId] = TicketInfo({
-            roundId:       roundId,
-            tier:          tier,
-            depositAmount: depositAmount,
+            roundId:        roundId,
+            tier1Amount:    tier1Amount,
+            tier2Amount:    tier2Amount,
+            tier3Amount:    tier3Amount,
             weightBasisPts: weightBps,
-            mintedAt:      block.timestamp
+            mintedAt:       block.timestamp
         });
 
         userRoundTicket[to][roundId] = tokenId;
 
         _safeMint(to, tokenId);
 
-        emit TicketMinted(to, tokenId, roundId, tier, depositAmount);
+        emit TicketMinted(to, tokenId, roundId, tier1Amount, tier2Amount, tier3Amount);
     }
 
     /**
