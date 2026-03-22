@@ -9,7 +9,7 @@ import "./TicketNFT.sol";
 import "./YieldVault.sol";
 import "./SquadRegistry.sol";
 
-// ── 把 Chainlink 的继承改成本地接口，逻辑完全不变 ──────────────────────────
+// ── Local interfaces instead of inheriting Chainlink; behavior unchanged ──
 
 interface IVRFCoordinatorV2Plus {
     struct RandomWordsRequest {
@@ -23,7 +23,7 @@ interface IVRFCoordinatorV2Plus {
     function requestRandomWords(RandomWordsRequest calldata req) external returns (uint256);
 }
 
-// VRF consumer base — rawFulfillRandomWords 由 MockVRF 调用
+// VRF consumer base — rawFulfillRandomWords is invoked by MockVRF
 abstract contract VRFConsumerBaseV2Plus {
     address internal immutable vrfCoordinator;
     constructor(address _vrfCoordinator) { vrfCoordinator = _vrfCoordinator; }
@@ -42,7 +42,7 @@ interface AutomationCompatibleInterface {
     function performUpkeep(bytes calldata) external;
 }
 
-// ── 主合约（与原版完全一致）──────────────────────────────────────────────────
+// ── Main contract (same logic as reference implementation) ────────────────
 
 contract MoneyMoneyCome is
     VRFConsumerBaseV2Plus,
@@ -202,25 +202,36 @@ contract MoneyMoneyCome is
         RoundState state = rounds[currentRound].state;
         bool penalised   = (state == RoundState.LOCKED || state == RoundState.DRAWING);
 
-        uint256 sharesToRedeem = (u.vaultShares * amount) / u.principal;
+        // Full exit: redeem all shares. Otherwise (shares * amount) / principal plus ERC4626
+        // redeem rounding down can make received < amount while we still try to transfer amount → revert.
+        uint256 sharesToRedeem = amount == u.principal
+            ? u.vaultShares
+            : (u.vaultShares * amount) / u.principal;
         uint256 received       = vault.redeem(sharesToRedeem, address(this), address(this));
 
         uint256 interest = received > amount ? received - amount : 0;
-        uint256 toUser   = amount;
+        uint256 toUser;
 
-        if (penalised && interest > 0) {
-            rounds[currentRound].prizePool += interest;
+        if (penalised) {
+            if (interest > 0) {
+                rounds[currentRound].prizePool += interest;
+                toUser = amount;
+            } else {
+                // No excess yield or rounding made received <= amount — pay only what was redeemed
+                toUser = received;
+            }
         } else {
-            toUser += interest;
+            // No penalty: user receives full redemption proceeds (yield included; never transfer more than received)
+            toUser = received;
         }
 
-        // 先算好要扣的权重，再更新 principal
-        uint256 weightToDeduct = u.principal == amount
-            ? u.weightBps
-            : (u.weightBps * amount) / u.principal;
+        // Proportional weight removal; always update u.weightBps so a later full withdraw
+        // does not subtract the original weight again (would underflow totalWeight).
+        uint256 weightToDeduct = (u.weightBps * amount) / u.principal;
 
         u.principal   -= amount;
         u.vaultShares -= sharesToRedeem;
+        u.weightBps   -= weightToDeduct;
         rounds[currentRound].totalPrincipal -= amount;
         rounds[currentRound].totalWeight    -= weightToDeduct;
 

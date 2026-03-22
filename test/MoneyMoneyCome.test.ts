@@ -245,6 +245,44 @@ describe("MoneyMoneyCome", async function () {
         });
       });
     });
+
+    it("should allow two half withdrawals of full deposit (200 → 100 → 100)", async function () {
+      const ctx = await deployAll();
+      const deposit = 200n * ONE_USDC;
+      const half = 100n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, deposit, 2);
+
+      const before = await ctx.mockUSDC.read.balanceOf([
+        ctx.user1.account.address,
+      ]);
+      await ctx.mmc.write.withdraw([half], { account: ctx.user1.account });
+      await ctx.mmc.write.withdraw([half], { account: ctx.user1.account });
+      const after = await ctx.mockUSDC.read.balanceOf([
+        ctx.user1.account.address,
+      ]);
+
+      assert.equal(after - before, deposit);
+    });
+
+    // 回归：非对称部分取款（与组员复现场景一致）
+    it("should allow uneven partial withdrawals (5002 → 3000 → 2002)", async function () {
+      const ctx = await deployAll();
+      const deposit = 5002n * ONE_USDC;
+      const first = 3000n * ONE_USDC;
+      const rest = 2002n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, deposit, 2);
+
+      const before = await ctx.mockUSDC.read.balanceOf([
+        ctx.user1.account.address,
+      ]);
+      await ctx.mmc.write.withdraw([first], { account: ctx.user1.account });
+      await ctx.mmc.write.withdraw([rest], { account: ctx.user1.account });
+      const after = await ctx.mockUSDC.read.balanceOf([
+        ctx.user1.account.address,
+      ]);
+
+      assert.equal(after - before, deposit);
+    });
   });
 
   // ════════════════════════════════════════════════════════════════════════
