@@ -78,11 +78,9 @@ export function useUserInfo() {
     },
   });
 
-  const refetch = () => {
-    refetchUser();
-    refetchProb();
-    refetchUsdc();
-    refetchAllowance();
+  // BUG-04: return Promise so callers can await actual data refresh
+  const refetch = async () => {
+    await Promise.all([refetchUser(), refetchProb(), refetchUsdc(), refetchAllowance()]);
   };
 
   return {

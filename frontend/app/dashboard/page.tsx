@@ -40,6 +40,7 @@ export default function DashboardPage() {
   const [withdrawStep, setWithdrawStep] = useState<"idle" | "confirm" | "pending" | "done">("idle");
   const [partialAmount, setPartialAmount] = useState("");
   const [withdrawMode, setWithdrawMode] = useState<"full" | "partial">("full");
+  const [finalWithdrawAmount, setFinalWithdrawAmount] = useState(0n); // BUG-03: capture before refetch zeroes principal
 
   const { writeContractAsync } = useWriteContract();
 
@@ -56,10 +57,10 @@ export default function DashboardPage() {
   const tierStyle = isInRound ? TIER_STYLES[dominantTier] : null;
 
   // Compute blended yield retain % for display
+  // BUG-01: divide by principal directly (not principal/100) to get 0-100 percentage
   const blendedYieldRetain = isInRound && userInfo!.principal > 0n
     ? Number(
-        (userInfo!.tier1Amount * 90n + userInfo!.tier2Amount * 50n + userInfo!.tier3Amount * 0n)
-        / (userInfo!.principal / 100n > 0n ? userInfo!.principal / 100n : 1n)
+        (userInfo!.tier1Amount * 90n + userInfo!.tier2Amount * 50n) / userInfo!.principal
       )
     : 0;
 
@@ -95,6 +96,7 @@ export default function DashboardPage() {
 
   async function handleWithdraw() {
     if (!canSubmitWithdraw) return;
+    const capturedAmount = withdrawAmount; // BUG-03: capture before refetch zeroes principal
     setWithdrawStep("pending");
     try {
       await writeContractAsync({
@@ -103,6 +105,7 @@ export default function DashboardPage() {
         functionName: "withdraw",
         args: [withdrawAmount],
       });
+      setFinalWithdrawAmount(capturedAmount);
       setWithdrawStep("done");
       await refetch();
     } catch (err) {
@@ -129,7 +132,7 @@ export default function DashboardPage() {
         <CheckCircle2 className="mx-auto mb-4 h-16 w-16 text-emerald-400" />
         <h1 className="mb-4 text-3xl font-bold text-white">Withdrawal Successful</h1>
         <p className="mb-2 text-white/50">
-          ${formatUsdc(withdrawAmount)} USDC has been returned to your wallet.
+          ${formatUsdc(finalWithdrawAmount)} USDC has been returned to your wallet.
         </p>
         <p className="mb-10 text-xs text-white/30">
           Balance: ${usdcBalance !== undefined ? formatUsdc(usdcBalance) : "—"} USDC

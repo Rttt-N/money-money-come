@@ -84,7 +84,7 @@ contract MoneyMoneyCome is
 
     // ── Constants ────────────────────────────────────────────────────────────
 
-    uint256 public constant ROUND_DURATION    = 1;
+    uint256 public          roundDuration      = 7 days; // M-2: mutable, default 7 days
     uint256 public constant BPS_DENOM         = 10_000;
     uint256 public constant LOYALTY_BONUS_BPS = 500;
     uint256 public constant MAX_LOYALTY_MULT  = 30_000;
@@ -115,6 +115,7 @@ contract MoneyMoneyCome is
     mapping(address => UserInfo)        public users;
     mapping(uint256 => address[])       private _roundParticipants;
     mapping(uint256 => uint256)         private _vrfRequestToRound;
+    mapping(address => uint256)         public  pendingWithdrawals;  // H-1: pull payments
 
     // ── Events ───────────────────────────────────────────────────────────────
 
@@ -123,6 +124,8 @@ contract MoneyMoneyCome is
     event DrawRequested(uint256 indexed roundId, uint256 requestId);
     event DrawFulfilled(uint256 indexed roundId, address indexed winner, uint256 prize);
     event RoundStarted(uint256 indexed roundId, uint256 startTime, uint256 endTime);
+    event PrizeCredited(address indexed recipient, uint256 amount);
+    event PrizeClaimed(address indexed recipient, uint256 amount);
 
     // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -277,6 +280,25 @@ contract MoneyMoneyCome is
         emit Withdrawn(msg.sender, amount, interest, penalised);
     }
 
+    // ── Admin setters ─────────────────────────────────────────────────────────
+
+    /// @notice Update round duration. Takes effect from the next round. M-2 fix.
+    function setRoundDuration(uint256 newDuration) external onlyOwner {
+        require(newDuration >= 1 days, "MMC: duration too short");
+        roundDuration = newDuration;
+    }
+
+    // ── claimPrize (pull payment for winners) ────────────────────────────────
+
+    /// @notice Claim any pending prize credited to your address.
+    function claimPrize() external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "MMC: nothing to claim");
+        pendingWithdrawals[msg.sender] = 0;
+        usdc.safeTransfer(msg.sender, amount);
+        emit PrizeClaimed(msg.sender, amount);
+    }
+
     // ── Chainlink Automation ─────────────────────────────────────────────────
 
     function checkUpkeep(bytes calldata)
@@ -294,8 +316,9 @@ contract MoneyMoneyCome is
 
     function performUpkeep(bytes calldata) external override {
         RoundInfo storage r = rounds[currentRound];
-        require(block.timestamp >= r.endTime, "MMC: round not ended");
-        require(r.state == RoundState.OPEN,   "MMC: wrong state");
+        require(block.timestamp >= r.endTime,                      "MMC: round not ended");
+        require(r.state == RoundState.OPEN,                        "MMC: wrong state");
+        require(_roundParticipants[currentRound].length > 0,       "MMC: no participants");
 
         r.state = RoundState.LOCKED;
         _harvestYield();
@@ -327,6 +350,15 @@ contract MoneyMoneyCome is
 
         address[] storage participants = _roundParticipants[roundId];
         require(participants.length > 0, "MMC: no participants");
+
+        // H-2: Guard against division by zero if all users withdrew during DRAWING
+        if (r.totalWeight == 0) {
+            r.state = RoundState.SETTLED;
+            emit DrawFulfilled(roundId, address(0), r.prizePool);
+            _startNewRound();
+            rounds[currentRound].prizePool += r.prizePool; // carry forward to new round
+            return;
+        }
 
         uint256 rand = randomWords[0] % r.totalWeight;
         uint256 cumulative;
@@ -360,13 +392,22 @@ contract MoneyMoneyCome is
                 uint256[] memory otherAmounts
             ) = squadRegistry.calcSquadPrize(winner, prize, addrs, weights);
 
-            if (winnerAmount > 0) usdc.safeTransfer(winner, winnerAmount);
+            // H-1: use pull payments to avoid USDC blacklist freezing settlement
+            if (winnerAmount > 0) {
+                pendingWithdrawals[winner] += winnerAmount;
+                emit PrizeCredited(winner, winnerAmount);
+            }
             for (uint256 i; i < otherMembers.length; i++) {
-                if (otherAmounts[i] > 0)
-                    usdc.safeTransfer(otherMembers[i], otherAmounts[i]);
+                if (otherAmounts[i] > 0) {
+                    pendingWithdrawals[otherMembers[i]] += otherAmounts[i];
+                    emit PrizeCredited(otherMembers[i], otherAmounts[i]);
+                }
             }
         } else {
-            if (prize > 0) usdc.safeTransfer(winner, prize);
+            if (prize > 0) {
+                pendingWithdrawals[winner] += prize;
+                emit PrizeCredited(winner, prize);
+            }
         }
 
         for (uint256 i; i < participants.length; i++) {
@@ -386,7 +427,7 @@ contract MoneyMoneyCome is
         uint256 start = block.timestamp;
         rounds[currentRound] = RoundInfo({
             startTime:      start,
-            endTime:        start + ROUND_DURATION,
+            endTime:        start + roundDuration,
             totalPrincipal: 0,
             prizePool:      0,
             totalWeight:    0,
@@ -420,7 +461,7 @@ contract MoneyMoneyCome is
             }
         }
 
-        emit RoundStarted(currentRound, start, start + ROUND_DURATION);
+        emit RoundStarted(currentRound, start, start + roundDuration);
     }
 
     function _harvestYield() internal {
@@ -436,17 +477,16 @@ contract MoneyMoneyCome is
             uint256 interest     = currentValue > u.principal ? currentValue - u.principal : 0;
             if (interest == 0) continue;
 
-            uint256 retainBps    = _blendedYieldRetainBps(u);
-            uint256 userKeeps    = (interest * retainBps) / BPS_DENOM;
-            uint256 toPool       = interest - userKeeps;
-
-            // Redeem ALL interest shares so u.vaultShares only backs principal
+            // L-4: redeem first, then calculate split from actual received amount
             uint256 sharesToRedeem = vault.previewWithdraw(interest);
             if (sharesToRedeem > u.vaultShares) sharesToRedeem = u.vaultShares;
-            vault.redeem(sharesToRedeem, address(this), address(this));
+            uint256 actualReceived = vault.redeem(sharesToRedeem, address(this), address(this));
             u.vaultShares -= sharesToRedeem;
 
-            // Send user's retained yield directly
+            uint256 retainBps = _blendedYieldRetainBps(u);
+            uint256 userKeeps = (actualReceived * retainBps) / BPS_DENOM;
+            uint256 toPool    = actualReceived - userKeeps;
+
             if (userKeeps > 0) {
                 usdc.safeTransfer(addr, userKeeps);
             }

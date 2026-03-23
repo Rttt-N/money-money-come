@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MoneyMoneyCome — Security Audit Report</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3348;
+      --text: #e2e8f0;
+      --muted: #8892a4;
+      --accent: #6366f1;
+      --red: #ef4444;
+      --red-bg: #2d1515;
+      --red-border: #7f1d1d;
+      --orange: #f97316;
+      --orange-bg: #2d1a0a;
+      --orange-border: #7c2d12;
+      --yellow: #eab308;
+      --yellow-bg: #2a2100;
+      --yellow-border: #713f12;
+      --blue: #3b82f6;
+      --blue-bg: #0f1f3d;
+      --blue-border: #1e3a8a;
+      --green: #22c55e;
+      --green-bg: #052e16;
+      --green-border: #14532d;
+      --gray-bg: #1e2130;
+      --gray-border: #374151;
+      --code-bg: #161925;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      padding: 0;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 48px 0 40px;
+      text-align: center;
+    }
+    .header-badge {
+      display: inline-block;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 4px 14px;
+      border-radius: 20px;
+      margin-bottom: 20px;
+    }
+    .header h1 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    .header h1 span { color: var(--accent); }
+    .header .subtitle {
+      color: var(--muted);
+      font-size: 15px;
+      margin-bottom: 28px;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+    .meta-item { font-size: 13px; color: var(--muted); }
+    .meta-item strong { color: var(--text); }
+
+    /* ── Layout ── */
+    .container { max-width: 960px; margin: 0 auto; padding: 40px 24px 80px; }
+
+    /* ── Summary Cards ── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 48px;
+    }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+    .summary-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+    .summary-card .count {
+      font-size: 36px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .summary-card .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+    .summary-card.high   .count { color: var(--red); }
+    .summary-card.medium .count { color: var(--orange); }
+    .summary-card.low    .count { color: var(--yellow); }
+    .summary-card.info   .count { color: var(--blue); }
+
+    /* ── Section Headers ── */
+    .section { margin-bottom: 48px; }
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── Finding Cards ── */
+    .finding {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .finding-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+    }
+    .finding-header:hover { background: var(--surface2); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .badge.high   { background: var(--red-bg);    color: var(--red);    border: 1px solid var(--red-border); }
+    .badge.medium { background: var(--orange-bg); color: var(--orange); border: 1px solid var(--orange-border); }
+    .badge.low    { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
+    .badge.info   { background: var(--blue-bg);   color: var(--blue);   border: 1px solid var(--blue-border); }
+    .badge.good   { background: var(--green-bg);  color: var(--green);  border: 1px solid var(--green-border); }
+
+    .finding-id {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      font-family: monospace;
+    }
+    .finding-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .chevron { color: var(--muted); font-size: 12px; transition: transform 0.2s; }
+    .finding.open .chevron { transform: rotate(180deg); }
+
+    .finding-body { padding: 20px; display: none; }
+    .finding.open .finding-body { display: block; }
+
+    .meta-tags {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .tag {
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 2px 10px;
+      border-radius: 4px;
+    }
+
+    .finding-body h4 {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 20px 0 8px;
+    }
+    .finding-body h4:first-of-type { margin-top: 0; }
+    .finding-body p { color: var(--text); font-size: 14px; margin-bottom: 10px; }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 12px 0;
+    }
+    code { font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace; }
+    .highlight { color: #f87171; }
+    .comment  { color: #6b7280; }
+    .keyword  { color: #a78bfa; }
+    .string   { color: #86efac; }
+    .number   { color: #fbbf24; }
+
+    /* ── Priority Table ── */
+    .priority-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .priority-table th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+    .priority-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .priority-table tr:last-child td { border-bottom: none; }
+    .priority-table tr:hover td { background: var(--surface2); }
+    .effort { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+    .effort.easy   { background: var(--green-bg); color: var(--green); }
+    .effort.medium { background: var(--orange-bg); color: var(--orange); }
+
+    /* ── Positive Findings ── */
+    .positive-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 600px) { .positive-grid { grid-template-columns: 1fr; } }
+    .positive-item {
+      background: var(--green-bg);
+      border: 1px solid var(--green-border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+    }
+    .positive-item .pos-title { font-weight: 600; color: var(--green); margin-bottom: 2px; }
+    .positive-item .pos-desc  { color: #86efac; font-size: 12px; opacity: 0.8; }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 40px;
+    }
+    .toc h3 { font-size: 13px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+    .toc ol { padding-left: 20px; }
+    .toc li { margin-bottom: 6px; }
+    .toc a { color: var(--accent); text-decoration: none; font-size: 14px; }
+    .toc a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-badge">Security Audit Report</div>
+  <h1>MoneyMoneyCome <span>Protocol</span></h1>
+  <p class="subtitle">Smart Contract Security Assessment — All Production Contracts</p>
+  <div class="meta-row">
+    <div class="meta-item"><strong>Date</strong> &nbsp;2026-03-23</div>
+    <div class="meta-item"><strong>Auditor</strong> &nbsp;Claude Code (claude-sonnet-4-6)</div>
+    <div class="meta-item"><strong>Compiler</strong> &nbsp;Solidity 0.8.28</div>
+    <div class="meta-item"><strong>Overall Risk</strong> &nbsp;<span style="color:#ef4444;font-weight:700">HIGH</span></div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Summary Cards -->
+  <div class="summary-grid">
+    <div class="summary-card high">   <div class="count">3</div><div class="label">High</div></div>
+    <div class="summary-card medium"> <div class="count">2</div><div class="label">Medium</div></div>
+    <div class="summary-card low">    <div class="count">4</div><div class="label">Low</div></div>
+    <div class="summary-card info">   <div class="count">4</div><div class="label">Info</div></div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Table of Contents</h3>
+    <ol>
+      <li><a href="#scope">Scope &amp; Methodology</a></li>
+      <li><a href="#high">High Severity Findings</a></li>
+      <li><a href="#medium">Medium Severity Findings</a></li>
+      <li><a href="#low">Low Severity Findings</a></li>
+      <li><a href="#info">Informational</a></li>
+      <li><a href="#priority">Priority Fix Summary</a></li>
+      <li><a href="#positive">Positive Observations</a></li>
+    </ol>
+  </div>
+
+  <!-- Scope -->
+  <div class="section" id="scope">
+    <div class="section-title">Scope &amp; Methodology</div>
+    <div class="finding">
+      <div class="finding-body" style="display:block">
+        <p>All four production contracts were reviewed line-by-line. Mock contracts are excluded from production scope.</p>
+        <div class="meta-tags" style="margin-top:12px">
+          <span class="tag">contracts/MoneyMoneyCome.sol</span>
+          <span class="tag">contracts/YieldVault.sol</span>
+          <span class="tag">contracts/SquadRegistry.sol</span>
+          <span class="tag">contracts/TicketNFT.sol</span>
+        </div>
+        <h4>Areas Reviewed</h4>
+        <div class="positive-grid">
+          <div class="positive-item"><div class="pos-title">Reentrancy</div><div class="pos-desc">Fund flow attack vectors</div></div>
+          <div class="positive-item"><div class="pos-title">Access Control</div><div class="pos-desc">onlyOwner, role boundaries</div></div>
+          <div class="positive-item"><div class="pos-title">Integer Safety</div><div class="pos-desc">Overflow, underflow, division by zero</div></div>
+          <div class="positive-item"><div class="pos-title">State Machines</div><div class="pos-desc">Round lifecycle transitions</div></div>
+          <div class="positive-item"><div class="pos-title">Chainlink Integration</div><div class="pos-desc">VRF callback safety, Automation guards</div></div>
+          <div class="positive-item"><div class="pos-title">Token Risks</div><div class="pos-desc">USDC blacklisting, ERC-721 transfer edge cases</div></div>
+          <div class="positive-item"><div class="pos-title">ERC-4626 Compliance</div><div class="pos-desc">Vault rounding, share accounting</div></div>
+          <div class="positive-item"><div class="pos-title">Economic Attacks</div><div class="pos-desc">Game-theory and MEV vectors</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HIGH -->
+  <div class="section" id="high">
+    <div class="section-title">🔴 High Severity</div>
+
+    <!-- H-1 -->
+    <div class="finding open" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">H-1</span>
+        <span class="badge high">HIGH</span>
+        <span class="finding-title">USDC Blacklist Causes Settlement to Permanently Freeze</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">MoneyMoneyCome.sol : 363–366</span>
+          <span class="tag">Category: DoS / Fund Lockup</span>
+          <span class="tag">Function: fulfillRandomWords()</span>
+        </div>
+        <h4>Description</h4>
+        <p>USDC supports address blacklisting (OFAC compliance). When a squad member wins, the contract loops through all squad members and immediately transfers USDC to each one. If any member address is blacklisted, <code>safeTransfer</code> reverts — and since this happens inside the Chainlink VRF callback, the entire callback transaction reverts.</p>
+        <pre><code><span class="comment">// MoneyMoneyCome.sol lines 363–366</span>
+<span class="keyword">for</span> (uint256 i; i &lt; otherMembers.length; i++) {
+    <span class="keyword">if</span> (otherAmounts[i] &gt; <span class="number">0</span>)
+        usdc.safeTransfer(otherMembers[i], otherAmounts[i]);  <span class="highlight">// ← any failure reverts ALL</span>
+}</code></pre>
+        <h4>Impact</h4>
+        <p>The round is permanently stuck in <code>DRAWING</code> state. All participants' principal and the entire prize pool are locked in the contract with no recovery path. An attacker can deliberately engineer this condition.</p>
+        <h4>Recommendation — Pull Payment Pattern</h4>
+        <pre><code><span class="comment">// Replace direct transfers with a claimable balance</span>
+mapping(address =&gt; uint256) <span class="keyword">public</span> pendingWithdrawals;
+
+<span class="comment">// In fulfillRandomWords(), replace safeTransfer calls with:</span>
+pendingWithdrawals[winner] += winnerAmount;
+<span class="keyword">for</span> (uint256 i; ...) {
+    pendingWithdrawals[otherMembers[i]] += otherAmounts[i];
+}
+
+<span class="comment">// New function — each recipient claims their own prize</span>
+<span class="keyword">function</span> claimPrize() <span class="keyword">external nonReentrant</span> {
+    uint256 amount = pendingWithdrawals[msg.sender];
+    <span class="keyword">require</span>(amount &gt; <span class="number">0</span>, <span class="string">"Nothing to claim"</span>);
+    pendingWithdrawals[msg.sender] = <span class="number">0</span>;
+    usdc.safeTransfer(msg.sender, amount);
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- H-2 -->
+    <div class="finding open" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">H-2</span>
+        <span class="badge high">HIGH</span>
+        <span class="finding-title">Division by Zero in Winner Selection if All Users Withdraw During DRAWING</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">MoneyMoneyCome.sol : 331</span>
+          <span class="tag">Category: Arithmetic / DoS</span>
+          <span class="tag">Function: fulfillRandomWords()</span>
+        </div>
+        <h4>Description</h4>
+        <p>Between <code>performUpkeep()</code> and the VRF callback, the round is in <code>DRAWING</code> state. Users can still call <code>withdraw()</code> during this window, which decrements <code>rounds[currentRound].totalWeight</code>. If all participants withdraw, <code>totalWeight</code> reaches 0. When the VRF callback fires:</p>
+        <pre><code><span class="comment">// MoneyMoneyCome.sol line 331</span>
+uint256 rand = randomWords[<span class="number">0</span>] <span class="highlight">% r.totalWeight</span>;
+<span class="comment">//                            ↑ Solidity 0.8 panic if totalWeight == 0</span></code></pre>
+        <h4>Impact</h4>
+        <p>The VRF callback reverts (Solidity 0.8 panic code 0x12 on modulo by zero). The round is permanently stuck in <code>DRAWING</code> state. The prize pool yield is locked forever.</p>
+        <h4>Recommendation</h4>
+        <pre><code><span class="comment">// Add before the modulo operation in fulfillRandomWords()</span>
+<span class="keyword">if</span> (r.totalWeight == <span class="number">0</span>) {
+    r.state = RoundState.SETTLED;
+    rounds[currentRound + <span class="number">1</span>].prizePool += prize; <span class="comment">// carry forward</span>
+    _startNewRound();
+    <span class="keyword">return</span>;
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- H-3 -->
+    <div class="finding open" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">H-3</span>
+        <span class="badge high">HIGH</span>
+        <span class="finding-title">performUpkeep() Can Be Called on Empty Round, Freezing the Protocol</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">MoneyMoneyCome.sol : 295–317</span>
+          <span class="tag">Category: Missing Guard / DoS</span>
+          <span class="tag">Function: performUpkeep()</span>
+        </div>
+        <h4>Description</h4>
+        <p><code>checkUpkeep()</code> correctly requires <code>participants.length > 0</code>, but <code>performUpkeep()</code> has no such check. Anyone can call it directly once a round has expired, even with zero participants.</p>
+        <pre><code><span class="comment">// checkUpkeep() — has guard ✓</span>
+upkeepNeeded = (block.timestamp &gt;= r.endTime
+    &amp;&amp; r.state == RoundState.OPEN
+    &amp;&amp; _roundParticipants[currentRound].length &gt; <span class="number">0</span>);  <span class="highlight">← guard exists here</span>
+
+<span class="comment">// performUpkeep() — NO guard ✗</span>
+<span class="keyword">function</span> performUpkeep(bytes calldata) <span class="keyword">external override</span> {
+    <span class="keyword">require</span>(block.timestamp &gt;= r.endTime, ...);
+    <span class="keyword">require</span>(r.state == RoundState.OPEN, ...);
+    <span class="highlight">// ← participants.length check is MISSING</span>
+    r.state = RoundState.LOCKED;
+    ...
+    vrfCoord.requestRandomWords(req);          <span class="comment">// VRF requested</span>
+    rounds[currentRound].state = RoundState.DRAWING;
+}</code></pre>
+        <p>When the VRF callback arrives for an empty round:</p>
+        <pre><code>require(participants.length &gt; <span class="number">0</span>, <span class="string">"MMC: no participants"</span>);  <span class="highlight">← REVERTS</span>
+<span class="comment">// Round permanently stuck in DRAWING state</span></code></pre>
+        <h4>Recommendation</h4>
+        <pre><code><span class="keyword">function</span> performUpkeep(bytes calldata) <span class="keyword">external override</span> {
+    <span class="keyword">require</span>(block.timestamp &gt;= r.endTime, <span class="string">"MMC: round not ended"</span>);
+    <span class="keyword">require</span>(r.state == RoundState.OPEN,   <span class="string">"MMC: wrong state"</span>);
+    <span class="keyword">require</span>(
+        _roundParticipants[currentRound].length &gt; <span class="number">0</span>,
+        <span class="string">"MMC: no participants"</span>                          <span class="highlight">← ADD THIS</span>
+    );
+    ...
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- MEDIUM -->
+  <div class="section" id="medium">
+    <div class="section-title">🟠 Medium Severity</div>
+
+    <!-- M-1 -->
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">M-1</span>
+        <span class="badge medium">MEDIUM</span>
+        <span class="finding-title">NFT Transfer Followed by Top-Up Permanently Locks the User Out</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">MoneyMoneyCome.sol : 204–210</span>
+          <span class="tag">TicketNFT.sol : 99–107</span>
+          <span class="tag">Category: Logic Error / DoS</span>
+        </div>
+        <h4>Description</h4>
+        <p>If a user transfers their TicketNFT to another address (Alice) and then calls <code>enterGame()</code> again to top up, the burn logic uses the ERC-721 <code>ownerOf()</code> to find the owner (which is now Alice), and clears <em>Alice's</em> <code>userRoundTicket</code> mapping. The original user's mapping is never cleared, so the subsequent <code>mint()</code> fails.</p>
+        <pre><code><span class="comment">// User transfers NFT to Alice, then calls enterGame() again</span>
+
+<span class="comment">// Step 1: lookup finds old tokenId (mapping not updated by ERC-721 transfer)</span>
+existingTicket = ticketNFT.userRoundTicket(msg.sender, currentRound);  <span class="comment">// = 5</span>
+
+<span class="comment">// Step 2: burn(5) — owner is now Alice</span>
+address owner = ownerOf(<span class="number">5</span>);                           <span class="comment">// = Alice</span>
+<span class="keyword">delete</span> userRoundTicket[<span class="highlight">Alice</span>][roundId];             <span class="highlight">// ← Alice's mapping cleared</span>
+<span class="comment">// userRoundTicket[msg.sender][roundId] still = 5 !</span>
+
+<span class="comment">// Step 3: mint check</span>
+<span class="keyword">require</span>(userRoundTicket[msg.sender][roundId] == <span class="number">0</span>);  <span class="highlight">// ← REVERTS (still = 5)</span></code></pre>
+        <h4>Recommendation — Option A: Store original owner in TicketInfo</h4>
+        <pre><code><span class="keyword">struct</span> TicketInfo {
+    address originalOwner;  <span class="highlight">// ← add this</span>
+    ...
+}
+
+<span class="keyword">function</span> burn(uint256 tokenId) <span class="keyword">external onlyOwner</span> {
+    <span class="keyword">delete</span> userRoundTicket[tickets[tokenId].originalOwner][tickets[tokenId].roundId];
+    <span class="keyword">delete</span> tickets[tokenId];
+    _burn(tokenId);
+}</code></pre>
+        <h4>Recommendation — Option B: Make tickets non-transferable</h4>
+        <pre><code><span class="keyword">function</span> _update(address to, uint256 tokenId, address auth)
+    <span class="keyword">internal override returns</span> (address) {
+    address from = _ownerOf(tokenId);
+    <span class="keyword">require</span>(from == address(<span class="number">0</span>) || to == address(<span class="number">0</span>),
+            <span class="string">"TicketNFT: non-transferable"</span>);
+    <span class="keyword">return super</span>._update(to, tokenId, auth);
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- M-2 -->
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">M-2</span>
+        <span class="badge medium">MEDIUM</span>
+        <span class="finding-title">ROUND_DURATION is Hardcoded as 1 Second (Unusable in Production)</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">MoneyMoneyCome.sol : 87</span>
+          <span class="tag">Category: Deployment Risk</span>
+        </div>
+        <h4>Description</h4>
+        <p><code>ROUND_DURATION = 1</code> is a Solidity <code>constant</code>, which means it is baked into the bytecode at compile time and cannot be changed after deployment. Deploying to mainnet with this value makes the protocol non-functional.</p>
+        <pre><code>uint256 <span class="keyword">public constant</span> ROUND_DURATION = <span class="highlight">1</span>;  <span class="comment">// ← 1 second, not 1 week</span></code></pre>
+        <h4>Recommendation</h4>
+        <pre><code>uint256 <span class="keyword">public</span> roundDuration = <span class="number">7 days</span>;  <span class="comment">// mutable, sensible default</span>
+
+<span class="keyword">function</span> setRoundDuration(uint256 newDuration) <span class="keyword">external onlyOwner</span> {
+    <span class="keyword">require</span>(newDuration &gt;= <span class="number">1 days</span>, <span class="string">"Too short"</span>);
+    roundDuration = newDuration;
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOW -->
+  <div class="section" id="low">
+    <div class="section-title">🟡 Low Severity</div>
+
+    <!-- L-1 -->
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">L-1</span>
+        <span class="badge low">LOW</span>
+        <span class="finding-title">Squad Prize Distribution Integer Dust Permanently Locked</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">SquadRegistry.sol : 152</span>
+          <span class="tag">Category: Precision Loss</span>
+        </div>
+        <h4>Description</h4>
+        <p>Integer division in the squad prize loop truncates remainders. The sum of all member payouts may be slightly less than the 20% squad pool, with the dust permanently trapped in the contract.</p>
+        <pre><code>otherAmounts[idx] = (squadPool * memberWeights_val[i]) / totalOtherWeight;
+<span class="comment">// Up to (MAX_MEMBERS - 1) wei lost per round due to rounding down</span></code></pre>
+        <h4>Recommendation</h4>
+        <pre><code><span class="comment">// Assign remainder to the last member</span>
+uint256 distributed;
+<span class="keyword">for</span> (uint256 i; i &lt; otherCount - <span class="number">1</span>; i++) {
+    otherAmounts[i] = (squadPool * memberWeights_val[...]) / totalOtherWeight;
+    distributed += otherAmounts[i];
+}
+otherAmounts[otherCount - <span class="number">1</span>] = squadPool - distributed;</code></pre>
+      </div>
+    </div>
+
+    <!-- L-2 -->
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">L-2</span>
+        <span class="badge low">LOW</span>
+        <span class="finding-title">totalSupply() Counts Burned Tokens</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">TicketNFT.sol : 117</span>
+          <span class="tag">Category: Incorrect View</span>
+        </div>
+        <h4>Description</h4>
+        <p><code>_nextTokenId</code> only increments on mint and is never decremented on burn. <code>totalSupply()</code> returns the historical minted count, not current circulating supply.</p>
+        <h4>Recommendation</h4>
+        <pre><code>uint256 <span class="keyword">private</span> _burnedCount;
+
+<span class="keyword">function</span> totalSupply() <span class="keyword">external view returns</span> (uint256) {
+    <span class="keyword">return</span> _nextTokenId - _burnedCount;
+}
+<span class="comment">// In burn(): _burnedCount++;</span></code></pre>
+      </div>
+    </div>
+
+    <!-- L-3 -->
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">L-3</span>
+        <span class="badge low">LOW</span>
+        <span class="finding-title">Squad Leader Field Not Updated When Leader Leaves</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">SquadRegistry.sol : _removeMember()</span>
+          <span class="tag">Category: Stale State</span>
+        </div>
+        <h4>Description</h4>
+        <p>When a squad leader calls <code>leaveSquad()</code>, they are removed from the members array but <code>Squad.leader</code> continues to point to their (now departed) address. <code>getSquad()</code> returns stale leader info.</p>
+        <h4>Recommendation</h4>
+        <pre><code><span class="comment">// In _removeMember(), after removing from array:</span>
+<span class="keyword">if</span> (s.leader == member &amp;&amp; s.members.length &gt; <span class="number">0</span>) {
+    s.leader = s.members[<span class="number">0</span>];
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- L-4 -->
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">L-4</span>
+        <span class="badge low">LOW</span>
+        <span class="finding-title">_harvestYield() Has Minor Accounting Precision Loss</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <div class="meta-tags">
+          <span class="tag">MoneyMoneyCome.sol : 444–454</span>
+          <span class="tag">Category: ERC-4626 Rounding</span>
+        </div>
+        <h4>Description</h4>
+        <p>ERC-4626 specifies that <code>previewWithdraw()</code> rounds <em>up</em> to protect the vault. The actual USDC received on redemption may be slightly more than <code>interest</code>, but <code>userKeeps</code> and <code>toPool</code> are still calculated from the original estimate. The epsilon remains in the contract indefinitely.</p>
+        <h4>Recommendation</h4>
+        <pre><code>uint256 actualReceived = vault.redeem(sharesToRedeem, address(<span class="keyword">this</span>), address(<span class="keyword">this</span>));
+uint256 userKeeps = (actualReceived * retainBps) / BPS_DENOM;
+uint256 toPool    = actualReceived - userKeeps;  <span class="comment">// uses actual, not estimated</span></code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- INFO -->
+  <div class="section" id="info">
+    <div class="section-title">ℹ️ Informational</div>
+
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">I-1</span>
+        <span class="badge info">INFO</span>
+        <span class="finding-title">No Emergency Pause Mechanism</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <p>The contracts have no pausable functionality. If a live exploit is discovered, there is no way to halt the protocol. Recommendation: inherit OpenZeppelin's <code>Pausable</code> and add <code>whenNotPaused</code> to <code>enterGame()</code> and <code>withdraw()</code>.</p>
+      </div>
+    </div>
+
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">I-2</span>
+        <span class="badge info">INFO</span>
+        <span class="finding-title">Infinite USDC Approval to Aave Pool</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <p><code>usdc.approve(_aavePool, type(uint256).max)</code> is set in the YieldVault constructor. This is standard DeFi practice, but means that if the Aave pool address is ever compromised, all vault USDC could be drained. The Aave pool address must be carefully verified before deployment.</p>
+      </div>
+    </div>
+
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">I-3</span>
+        <span class="badge info">INFO</span>
+        <span class="finding-title">performUpkeep() Has No Access Control (By Design)</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <p><code>performUpkeep()</code> can be called by any address, not just the Chainlink Automation registry. This is intentional for Chainlink Automation compatibility. State guards prevent exploitation in the normal case (see H-3 for the edge case where this becomes a risk).</p>
+      </div>
+    </div>
+
+    <div class="finding" onclick="toggle(this)">
+      <div class="finding-header">
+        <span class="finding-id">I-4</span>
+        <span class="badge info">INFO</span>
+        <span class="finding-title">Contracts Are Not Upgradeable</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="finding-body">
+        <p>All contracts use standard non-proxy deployment. Any bug fix requires redeploying the full contract system and migrating user state. Consider using the UUPS or Transparent Proxy pattern (OpenZeppelin), or document a clear migration procedure for users.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRIORITY TABLE -->
+  <div class="section" id="priority">
+    <div class="section-title">Priority Fix Summary</div>
+    <div class="finding">
+      <div class="finding-body" style="display:block; padding:0;">
+        <table class="priority-table">
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>ID</th>
+              <th>Issue</th>
+              <th>Effort</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="badge high">CRITICAL</span></td><td style="font-family:monospace;font-weight:700">H-1</td><td>Use pull payment for prize distribution</td><td><span class="effort medium">Medium</span></td></tr>
+            <tr><td><span class="badge high">CRITICAL</span></td><td style="font-family:monospace;font-weight:700">H-2</td><td>Guard totalWeight == 0 before modulo in VRF callback</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge high">CRITICAL</span></td><td style="font-family:monospace;font-weight:700">H-3</td><td>Add participants.length check in performUpkeep()</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge medium">HIGH</span></td><td style="font-family:monospace;font-weight:700">M-1</td><td>Fix NFT burn mapping using originalOwner or block transfers</td><td><span class="effort medium">Medium</span></td></tr>
+            <tr><td><span class="badge medium">HIGH</span></td><td style="font-family:monospace;font-weight:700">M-2</td><td>Change ROUND_DURATION constant to a configurable variable</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge low">MEDIUM</span></td><td style="font-family:monospace;font-weight:700">L-1</td><td>Assign squad prize dust remainder to last member</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge low">LOW</span></td><td style="font-family:monospace;font-weight:700">L-2</td><td>Fix totalSupply() to exclude burned tokens</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge low">LOW</span></td><td style="font-family:monospace;font-weight:700">L-3</td><td>Update leader field when leader leaves squad</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge low">LOW</span></td><td style="font-family:monospace;font-weight:700">L-4</td><td>Use actualReceived in _harvestYield() calculations</td><td><span class="effort easy">Easy</span></td></tr>
+            <tr><td><span class="badge info">INFO</span></td><td style="font-family:monospace;font-weight:700">I-1</td><td>Add Pausable emergency stop mechanism</td><td><span class="effort easy">Easy</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- POSITIVE -->
+  <div class="section" id="positive">
+    <div class="section-title">✅ Positive Observations</div>
+    <div class="positive-grid">
+      <div class="positive-item">
+        <div class="pos-title">ReentrancyGuard on all fund flows</div>
+        <div class="pos-desc">enterGame() and withdraw() are both protected against reentrancy attacks</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">SafeERC20 for all USDC transfers</div>
+        <div class="pos-desc">Handles non-standard ERC-20 return values safely throughout</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">VRF callback origin verified</div>
+        <div class="pos-desc">rawFulfillRandomWords checks msg.sender == vrfCoordinator</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Vault access restricted to MMC</div>
+        <div class="pos-desc">YieldVault deposit/withdraw/redeem are onlyOwner (the MMC contract)</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">TicketNFT mint/burn restricted to MMC</div>
+        <div class="pos-desc">No external party can manipulate participation tickets</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">MIN_DEPOSIT enforced (10 USDC)</div>
+        <div class="pos-desc">Prevents dust deposits that bloat participant arrays</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Tier validation (1–3 only)</div>
+        <div class="pos-desc">Invalid tier values correctly rejected in enterGame()</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Strict round state machine</div>
+        <div class="pos-desc">OPEN → LOCKED → DRAWING → SETTLED enforced at every transition</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Proportional weight/tier deduction</div>
+        <div class="pos-desc">Partial withdrawals correctly scale all user metrics</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Loyalty reset on full withdrawal</div>
+        <div class="pos-desc">Prevents bonus exploitation via withdraw-and-reenter strategy</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Squad size capped at 10</div>
+        <div class="pos-desc">Bounds the gas cost of prize distribution loops</div>
+      </div>
+      <div class="positive-item">
+        <div class="pos-title">Solidity 0.8 implicit overflow checks</div>
+        <div class="pos-desc">All arithmetic protected without needing SafeMath library</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function toggle(el) {
+    el.classList.toggle('open');
+  }
+</script>
+</body>
+</html>

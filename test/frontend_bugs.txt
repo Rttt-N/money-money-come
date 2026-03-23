@@ -1,0 +1,45 @@
+Frontend Bug Report — MoneyMoneyCome
+======================================
+
+BUG-01 [HIGH] blendedYieldRetain 计算结果偏大 100 倍
+------------------------------------------------------
+文件: frontend/hooks/useUserInfo.ts
+问题: 混合收益保留率计算时除以 (principal / 100n) 而不是 principal，
+      导致结果放大 100 倍，显示的保留率数值错误。
+错误代码:
+  (tier1Amount * 9000n + tier2Amount * 5000n) / (principal / 100n)
+修复:
+  (tier1Amount * 9000n + tier2Amount * 5000n) / principal
+
+
+BUG-02 [HIGH] 访问不存在的字段 userInfo.tier
+---------------------------------------------
+文件: frontend/app/squads/page.tsx (约第 283 行)
+问题: 代码读取 userInfo.tier，但合约返回的结构体中没有 tier 字段，
+      只有 tier1Amount / tier2Amount / tier3Amount。
+      运行时值为 undefined，可能导致显示错误或逻辑判断失败。
+修复: 根据三个 tierAmount 字段推断主要 tier，或直接移除该引用。
+
+
+BUG-03 [MEDIUM] 提款成功后金额显示为 $0.00
+------------------------------------------
+文件: frontend/app/play/page.tsx (提款成功页面)
+问题: 提款完成后调用 refetch() 刷新用户数据，此时 userInfo.principal
+      已变为 0，导致成功提示中显示的提款金额变成 $0.00。
+修复: 在调用 refetch() 之前，将 withdrawAmount 的值保存到局部变量，
+      再用局部变量渲染成功页面。
+
+
+BUG-04 [MEDIUM] await refetch() 不会真正等待数据刷新
+-----------------------------------------------------
+文件: frontend/hooks/useUserInfo.ts 及各调用处
+问题: wagmi 的 refetch() 返回 void 而非 Promise，
+      使用 await refetch() 会立即继续执行，后续读取的仍是旧数据。
+修复: 改用 refetch() 返回的 Promise（wagmi v2 的 refetch 实际返回
+      QueryObserverResult），或通过监听 userInfo 变化来触发后续逻辑：
+        const result = await refetch();  // wagmi v2 支持
+      或使用 useEffect 监听 principal 变化。
+
+
+======================================
+共发现 4 个 Bug：2 HIGH, 2 MEDIUM

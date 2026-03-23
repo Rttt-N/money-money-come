@@ -280,7 +280,8 @@ export default function SquadsPage() {
                 <div className="flex justify-between">
                   <span className="text-white/50">Tier</span>
                   <span className="font-bold text-white">
-                    {["—", "Worker 🔵", "Player 🟣", "VIP 🟠"][userInfo.tier] ?? "—"}
+                    {/* BUG-02: userInfo has no .tier field; derive from tier amounts */}
+                    {userInfo.tier3Amount > 0n ? "VIP 🟠" : userInfo.tier2Amount > 0n ? "Player 🟣" : userInfo.tier1Amount > 0n ? "Worker 🔵" : "—"}
                   </span>
                 </div>
               </div>

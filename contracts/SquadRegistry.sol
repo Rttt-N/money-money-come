@@ -145,11 +145,18 @@ contract SquadRegistry is Ownable {
             return (winnerAmount, otherMembers, otherAmounts);
         }
 
+        // L-1: assign remainder to the last member to avoid dust being locked
         uint256 idx;
+        uint256 distributed;
         for (uint256 i; i < memberWeights_addr.length; i++) {
             if (memberWeights_addr[i] != winner) {
                 otherMembers[idx] = memberWeights_addr[i];
-                otherAmounts[idx] = (squadPool * memberWeights_val[i]) / totalOtherWeight;
+                if (idx < otherCount - 1) {
+                    otherAmounts[idx] = (squadPool * memberWeights_val[i]) / totalOtherWeight;
+                    distributed += otherAmounts[idx];
+                } else {
+                    otherAmounts[idx] = squadPool - distributed; // remainder to last
+                }
                 idx++;
             }
         }
@@ -185,6 +192,10 @@ contract SquadRegistry is Ownable {
                 s.members.pop();
                 break;
             }
+        }
+        // L-3: reassign leader if the leader just left
+        if (s.leader == member && s.members.length > 0) {
+            s.leader = s.members[0];
         }
         // If squad is now empty, deactivate
         if (s.members.length == 0) {
