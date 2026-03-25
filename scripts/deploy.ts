@@ -156,6 +156,11 @@ async function main() {
   await ticketNFT.write.transferOwnership([mmc.address]);
   console.log("\n[Setup] Ownership transferred to MoneyMoneyCome ✓");
 
+  if (isLocal) {
+    await mmc.write.setRoundDuration([300n]); // 5 minutes for local testing
+    console.log("[Setup] Round duration set to 300s (5 min) for local testing ✓");
+  }
+
   // ── Step 4: 写入 addresses.json ──────────────────────────────────────────────
 
   const chainKey = chainId.toString();

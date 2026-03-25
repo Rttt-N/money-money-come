@@ -30,11 +30,13 @@ async function main() {
   }
 
   const mmc = await viem.getContractAt("MoneyMoneyCome", mmcAddress);
-  const seconds = process.env.ADVANCE_SECONDS ? Number(process.env.ADVANCE_SECONDS) : 2;
+  const roundDuration = Number(await mmc.read.roundDuration());
+  const seconds = process.env.ADVANCE_SECONDS ? Number(process.env.ADVANCE_SECONDS) : roundDuration + 1;
   if (!Number.isFinite(seconds) || seconds <= 0) {
     console.error("ADVANCE_SECONDS must be a positive number");
     process.exit(1);
   }
+  console.log(`Advancing time by ${seconds}s (roundDuration=${roundDuration}s)...`);
 
   await provider.request({
     method: "evm_increaseTime",

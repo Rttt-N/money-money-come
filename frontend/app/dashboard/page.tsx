@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount, useWriteContract } from "wagmi";
+import { useAccount, useWriteContract, useReadContract } from "wagmi";
 import { useUserInfo } from "@/hooks/useUserInfo";
 import { useRoundInfo } from "@/hooks/useRoundInfo";
 import {
   MMC_ABI,
-  TIERS,
   formatUsdc,
   formatProbability,
   RoundState,
@@ -41,8 +40,39 @@ export default function DashboardPage() {
   const [partialAmount, setPartialAmount] = useState("");
   const [withdrawMode, setWithdrawMode] = useState<"full" | "partial">("full");
   const [finalWithdrawAmount, setFinalWithdrawAmount] = useState(0n); // BUG-03: capture before refetch zeroes principal
+  const [claimStep, setClaimStep] = useState<"idle" | "pending" | "done">("idle");
 
   const { writeContractAsync } = useWriteContract();
+
+  const { data: pendingPrize, refetch: refetchPrize } = useReadContract({
+    address: addresses?.mmc,
+    abi: MMC_ABI,
+    functionName: "pendingWithdrawals",
+    args: address ? [address] : undefined,
+    query: {
+      enabled: !!addresses?.mmc && !!address,
+      refetchInterval: 10_000,
+    },
+  });
+
+  const hasPrize = pendingPrize !== undefined && pendingPrize > 0n;
+
+  async function handleClaim() {
+    if (!addresses || !hasPrize) return;
+    setClaimStep("pending");
+    try {
+      await writeContractAsync({
+        address: addresses.mmc,
+        abi: MMC_ABI,
+        functionName: "claimPrize",
+      });
+      setClaimStep("done");
+      await Promise.all([refetch(), refetchPrize()]);
+    } catch (err) {
+      console.error(err);
+      setClaimStep("idle");
+    }
+  }
 
   const isInRound = userInfo && userInfo.principal > 0n;
   const roundState = roundInfo?.state ?? 0;
@@ -315,8 +345,44 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Right column: withdraw panel */}
+        {/* Right column: claim + withdraw panel */}
         <div className="space-y-4">
+          {/* Claim Prize */}
+          {hasPrize && claimStep !== "done" && (
+            <div className="rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-500/10 to-orange-500/10 p-6">
+              <div className="mb-3 flex items-center gap-2">
+                <Trophy className="h-5 w-5 text-amber-400" />
+                <h3 className="font-semibold text-white">Prize Available</h3>
+              </div>
+              <div className="mb-4 text-2xl font-bold text-amber-400">
+                ${formatUsdc(pendingPrize)} USDC
+              </div>
+              <button
+                onClick={handleClaim}
+                disabled={claimStep === "pending"}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {claimStep === "pending" ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Claiming…
+                  </>
+                ) : (
+                  "Claim Prize"
+                )}
+              </button>
+            </div>
+          )}
+          {claimStep === "done" && (
+            <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-6 text-center">
+              <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-400" />
+              <div className="font-semibold text-white">Prize Claimed!</div>
+              <button onClick={() => setClaimStep("idle")} className="mt-2 text-xs text-white/40 underline">
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <div className="glass-card p-6">
             <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-white">
               <Shield className="h-4 w-4 text-emerald-400" />
