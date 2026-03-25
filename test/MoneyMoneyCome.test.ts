@@ -6,6 +6,9 @@ import { network } from "hardhat";
 const ONE_USDC = 10n ** 6n; // 1 USDC = 1_000_000 (6 decimals)
 const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+// Round 1 endTime uses default 7 days from constructor; subsequent rounds use setRoundDuration(2)
+const ROUND1_WAIT = 7 * 86400 + 1; // 7 days + 1 second to pass round 1 endTime
+const ROUND_WAIT = 11; // for rounds after round 1 (duration = 10 seconds)
 
 describe("MoneyMoneyCome — 46 Test Cases", async function () {
   const { viem, provider } = await network.connect();
@@ -45,6 +48,9 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
 
     await vault.write.transferOwnership([mmc.address]);
     await ticketNFT.write.transferOwnership([mmc.address]);
+
+    // Set short round duration for testing (default is 7 days)
+    await mmc.write.setRoundDuration([10n]);
 
     return {
       mmc, vault, ticketNFT, squadRegistry,
@@ -224,14 +230,18 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const yieldAmount = 20n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 3);
       await simulateYield(ctx, yieldAmount);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
       assert.equal(upkeepNeeded, true);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      const balanceBefore = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      // Prize + yield go to pendingWithdrawals (pull payment)
+      const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
+      assert.ok(pending > 0n, "Winner should have pending prize");
+      const balanceBefore = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user1.account });
       const balanceAfter = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
-      assert.ok(balanceAfter > balanceBefore, "Winner should receive the prize");
+      assert.ok(balanceAfter > balanceBefore, "Winner should receive the prize after claiming");
       const newRound = await ctx.mmc.read.currentRound();
       assert.equal(newRound, 2n);
     });
@@ -246,7 +256,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const amount = 200n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 3);
       await simulateYield(ctx, 20n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
       assert.equal(await ctx.mmc.read.currentRound(), 2n);
@@ -269,7 +279,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const infoR1 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR1.weightBps, 100n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
@@ -286,7 +296,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       assert.equal(infoR1.tier3Amount, 40n * ONE_USDC);
       assert.equal(infoR1.weightBps, 46n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
@@ -301,14 +311,14 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const ctx = await deployAll();
       await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
       assert.equal(infoR2.weightBps, 105n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND_WAIT); // round 2 uses setRoundDuration(2)
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([2n, 0n]);
       const infoR3 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
@@ -322,7 +332,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 3);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
@@ -343,7 +353,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
       await enterGame(ctx, ctx.user2, amount, 3);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
@@ -375,17 +385,21 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 3);
       await simulateYield(ctx, 10n * ONE_USDC);
-      const beforeHarvest = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      const afterHarvest = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
-      const userReceived = afterHarvest - beforeHarvest;
+      // NEW-CH-1: yield now goes to pendingWithdrawals (pull payment)
+      const pendingYield = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
       const expected = 4_500_000n;
       const tolerance = 10_000n;
       assert.ok(
-        userReceived >= expected - tolerance && userReceived <= expected + tolerance,
-        `User should receive ~4.5 USDC retained yield, got ${Number(userReceived) / 1e6}`,
+        pendingYield >= expected - tolerance && pendingYield <= expected + tolerance,
+        `User should have ~4.5 USDC pending yield, got ${Number(pendingYield) / 1e6}`,
       );
+      // Claim and verify balance change
+      const beforeClaim = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user1.account });
+      const afterClaim = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      assert.equal(afterClaim - beforeClaim, pendingYield);
       const roundInfo = await ctx.mmc.read.getCurrentRoundInfo();
       assert.ok(
         roundInfo.prizePool >= 5_400_000n && roundInfo.prizePool <= 5_600_000n,
@@ -424,17 +438,17 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
   // TC-24  Withdraw with Penalty
   // ════════════════════════════════════════════════════════════════════════
   describe("TC-24: Withdraw with Penalty", async function () {
-    it("TC-24: should return only principal when withdrawing during DRAWING phase", async function () {
+    it("TC-24: should revert when withdrawing during DRAWING phase (NEW-CM-2)", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 2);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
-      await ctx.mmc.write.performUpkeep(["0x"]);
-      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
-      await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
-      const after = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
-      assert.equal(after - before, amount);
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]); // state = DRAWING
+      // NEW-CM-2: withdrawals during DRAWING are now blocked
+      await assert.rejects(async () => {
+        await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
+      });
     });
   });
 
@@ -452,12 +466,16 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await enterGame(ctx, ctx.user1, amount1, 3, squadId);
       await enterGame(ctx, ctx.user2, amount2, 1, squadId);
       await simulateYield(ctx, 20n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      const user2Before = await ctx.mockUSDC.read.balanceOf([ctx.user2.account.address]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      // Prize goes to pendingWithdrawals (pull payment)
+      const pending2 = await ctx.mmc.read.pendingWithdrawals([ctx.user2.account.address]);
+      assert.ok(pending2 > 0n, "Squad member should have pending prize share");
+      const user2Before = await ctx.mockUSDC.read.balanceOf([ctx.user2.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user2.account });
       const user2After = await ctx.mockUSDC.read.balanceOf([ctx.user2.account.address]);
-      assert.ok(user2After > user2Before, "Squad member should receive 20% prize share");
+      assert.ok(user2After > user2Before, "Squad member should receive 20% prize share after claiming");
     });
   });
 
@@ -611,7 +629,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
     it("TC-37: checkUpkeep should return false when there are no participants", async function () {
       const ctx = await deployAll();
       // Advance time well past ROUND_DURATION but no one deposited
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
       assert.equal(upkeepNeeded, false);
     });
@@ -619,7 +637,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
     it("TC-38: checkUpkeep should return false after performUpkeep (state is no longer OPEN)", async function () {
       const ctx = await deployAll();
       await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]); // round → DRAWING
       // checkUpkeep should now be false (state != OPEN)
       const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
@@ -683,7 +701,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const yieldAmt = 10n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 3); // retain 0% → all yield to pool
       await simulateYield(ctx, yieldAmt);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
 
       const info = await ctx.mmc.read.getCurrentRoundInfo();
@@ -697,7 +715,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
     it("TC-44: enterGame should revert when round is not in OPEN state (DRAWING)", async function () {
       const ctx = await deployAll();
       await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]); // now DRAWING
 
       const amount = 50n * ONE_USDC;
@@ -731,7 +749,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
 
       await enterGame(ctx, ctx.user1, amount, 3); // no squad
       await simulateYield(ctx, yieldAmt);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
 
       // Capture prizePool before VRF (after harvest)
@@ -739,11 +757,15 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const prizePool = roundInfoBeforeVRF.prizePool;
       assert.ok(prizePool > 0n, "Prize pool should be positive after harvest");
 
-      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      // Prize goes to pendingWithdrawals (pull payment)
+      const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
+      // pendingWithdrawals includes prize + retained yield from harvest
+      assert.ok(pending >= prizePool, "Pending should include at least the prize pool");
+      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user1.account });
       const after = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
-
-      assert.equal(after - before, prizePool, "Sole winner should receive the full prize pool");
+      assert.equal(after - before, pending, "Sole winner should receive all pending funds");
     });
   });
 });

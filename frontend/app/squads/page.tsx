@@ -48,7 +48,13 @@ export default function SquadsPage() {
   }
 
   async function handleJoin() {
-    const id = BigInt(joinIdInput || "0");
+    // NEW-FM-6: guard against non-numeric input
+    let id: bigint;
+    try {
+      id = BigInt(joinIdInput || "0");
+    } catch {
+      return; // invalid input, ignore
+    }
     if (id === 0n) return;
     setAction("join");
     try {

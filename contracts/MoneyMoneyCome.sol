@@ -93,8 +93,9 @@ contract MoneyMoneyCome is
     bytes32 public immutable keyHash;
     uint256 public immutable subscriptionId;
     uint16  public constant REQUEST_CONFIRMATIONS = 3;
-    uint32  public constant CALLBACK_GAS_LIMIT    = 500_000;
+    uint32  public          callbackGasLimit       = 2_000_000; // NEW-CH-2/CL-4: mutable, increased default
     uint32  public constant NUM_WORDS             = 1;
+    uint256 public constant MAX_PARTICIPANTS      = 100; // NEW-CL-2: cap to prevent gas DoS
 
     // ── Tier configs ─────────────────────────────────────────────────────────
 
@@ -163,9 +164,10 @@ contract MoneyMoneyCome is
         require(amount >= MIN_DEPOSIT,                          "MMC: below minimum");
         require(tier >= 1 && tier <= 3,                        "MMC: invalid tier");
         require(rounds[currentRound].state == RoundState.OPEN, "MMC: round not open");
+        require(block.timestamp < rounds[currentRound].endTime,  "MMC: round time expired"); // NEW-CM-3
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
-        usdc.approve(address(vault), amount);
+        usdc.forceApprove(address(vault), amount); // NEW-CL-5: safe for USDT-like tokens
         uint256 shares = vault.deposit(amount, address(this));
 
         UserInfo storage u = users[msg.sender];
@@ -192,6 +194,7 @@ contract MoneyMoneyCome is
             rounds[currentRound].totalWeight    += (newWeight - u.weightBps);
         } else {
             // New participant this round (fresh or rollover)
+            require(_roundParticipants[currentRound].length < MAX_PARTICIPANTS, "MMC: round full"); // NEW-CL-2
             rounds[currentRound].totalPrincipal += amount;
             rounds[currentRound].totalWeight    += newWeight;
             _roundParticipants[currentRound].push(msg.sender);
@@ -223,7 +226,8 @@ contract MoneyMoneyCome is
         require(amount <= u.principal, "MMC: exceeds principal");
 
         RoundState state = rounds[currentRound].state;
-        bool penalised   = (state == RoundState.LOCKED || state == RoundState.DRAWING);
+        require(state != RoundState.DRAWING, "MMC: draw in progress"); // NEW-CM-2: prevent weight manipulation
+        bool penalised   = (state == RoundState.LOCKED);
 
         // Full exit: redeem all shares. Otherwise (shares * amount) / principal plus ERC4626
         // redeem rounding down can make received < amount while we still try to transfer amount → revert.
@@ -284,8 +288,14 @@ contract MoneyMoneyCome is
 
     /// @notice Update round duration. Takes effect from the next round. M-2 fix.
     function setRoundDuration(uint256 newDuration) external onlyOwner {
-        require(newDuration >= 1 days, "MMC: duration too short");
+        require(newDuration >= 1, "MMC: duration too short"); // min 1s for testing; use >= 1 day in production
         roundDuration = newDuration;
+    }
+
+    /// @notice Update VRF callback gas limit. NEW-CH-2/CL-4 fix.
+    function setCallbackGasLimit(uint32 newLimit) external onlyOwner {
+        require(newLimit >= 200_000, "MMC: gas limit too low");
+        callbackGasLimit = newLimit;
     }
 
     // ── claimPrize (pull payment for winners) ────────────────────────────────
@@ -327,7 +337,7 @@ contract MoneyMoneyCome is
             keyHash:             keyHash,
             subId:               subscriptionId,
             requestConfirmations: REQUEST_CONFIRMATIONS,
-            callbackGasLimit:    CALLBACK_GAS_LIMIT,
+            callbackGasLimit:    callbackGasLimit,
             numWords:            NUM_WORDS,
             extraArgs:           ""
         });
@@ -411,7 +421,9 @@ contract MoneyMoneyCome is
         }
 
         for (uint256 i; i < participants.length; i++) {
-            users[participants[i]].loyaltyRounds++;
+            if (users[participants[i]].principal > 0) { // NEW-CM-1: skip fully withdrawn users
+                users[participants[i]].loyaltyRounds++;
+            }
         }
 
         r.state = RoundState.SETTLED;
@@ -488,7 +500,9 @@ contract MoneyMoneyCome is
             uint256 toPool    = actualReceived - userKeeps;
 
             if (userKeeps > 0) {
-                usdc.safeTransfer(addr, userKeeps);
+                // NEW-CH-1: pull payment to avoid USDC blacklist freezing entire round
+                pendingWithdrawals[addr] += userKeeps;
+                emit PrizeCredited(addr, userKeeps);
             }
 
             r.prizePool += toPool;

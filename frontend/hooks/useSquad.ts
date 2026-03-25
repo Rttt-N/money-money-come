@@ -1,7 +1,9 @@
 "use client";
 
 import { useReadContract, useWriteContract, useChainId, useAccount, useWaitForTransactionReceipt } from "wagmi";
+import { waitForTransactionReceipt } from "@wagmi/core";
 import { SQUAD_REGISTRY_ABI, getAddresses } from "@/lib/contracts";
+import { config } from "@/lib/wagmi";
 import { useState } from "react";
 
 export function useSquad() {
@@ -42,6 +44,7 @@ export function useSquad() {
   const { writeContractAsync, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
+  // NEW-FM-3: wait for tx confirmation before resolving
   async function createSquad() {
     if (!addresses?.squadRegistry) return;
     const hash = await writeContractAsync({
@@ -50,6 +53,7 @@ export function useSquad() {
       functionName: "createSquad",
     });
     setTxHash(hash);
+    await waitForTransactionReceipt(config, { hash });
   }
 
   async function joinSquad(id: bigint) {
@@ -61,6 +65,7 @@ export function useSquad() {
       args: [id],
     });
     setTxHash(hash);
+    await waitForTransactionReceipt(config, { hash });
   }
 
   async function leaveSquad() {
@@ -71,11 +76,12 @@ export function useSquad() {
       functionName: "leaveSquad",
     });
     setTxHash(hash);
+    await waitForTransactionReceipt(config, { hash });
   }
 
-  const refetch = () => {
-    refetchSquadId();
-    refetchSquadInfo();
+  // NEW-FM-2: async refetch so callers can await
+  const refetch = async () => {
+    await Promise.all([refetchSquadId(), refetchSquadInfo()]);
   };
 
   return {

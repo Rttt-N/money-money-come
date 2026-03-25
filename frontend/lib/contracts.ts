@@ -79,7 +79,50 @@ export const MMC_ABI = [
       { name: "performData", type: "bytes" },
     ],
   },
+  // NEW-DH-1: missing view/write functions
+  {
+    name: "pendingWithdrawals",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "roundDuration",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
   // Writes
+  {
+    name: "performUpkeep",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "performData", type: "bytes" }],
+    outputs: [],
+  },
+  {
+    name: "claimPrize",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: "setRoundDuration",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "newDuration", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "setCallbackGasLimit",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "newLimit", type: "uint32" }],
+    outputs: [],
+  },
   {
     name: "enterGame",
     type: "function",
@@ -135,6 +178,22 @@ export const MMC_ABI = [
       { name: "roundId", type: "uint256", indexed: true },
       { name: "startTime", type: "uint256", indexed: false },
       { name: "endTime", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    name: "PrizeCredited",
+    type: "event",
+    inputs: [
+      { name: "recipient", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    name: "PrizeClaimed",
+    type: "event",
+    inputs: [
+      { name: "recipient", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
     ],
   },
 ] as const;
@@ -277,6 +336,7 @@ export const TICKET_NFT_ABI = [
         type: "tuple",
         components: [
           { name: "roundId", type: "uint256" },
+          { name: "originalOwner", type: "address" }, // NEW-DH-2: was missing, caused ABI decode shift
           { name: "tier1Amount", type: "uint256" },
           { name: "tier2Amount", type: "uint256" },
           { name: "tier3Amount", type: "uint256" },
@@ -329,9 +389,13 @@ const DEFAULT_MAP: Record<number, ChainAddresses> = {
 
 function buildAddressMap(): Record<number, ChainAddresses> {
   const map = { ...DEFAULT_MAP };
-  const local = (deployedAddresses as Record<string, ChainAddresses>)["31337"];
-  if (local?.mmc && local.mmc !== ZERO) {
-    map[31337] = local;
+  const deployed = deployedAddresses as Record<string, ChainAddresses>;
+  // NEW-DM-1: read both local and Sepolia addresses
+  for (const [chainIdStr, addrs] of Object.entries(deployed)) {
+    const chainId = Number(chainIdStr);
+    if (addrs?.mmc && addrs.mmc !== ZERO) {
+      map[chainId] = addrs;
+    }
   }
   return map;
 }
@@ -394,11 +458,11 @@ export const MIN_DEPOSIT = 10n * 10n ** 6n; // 10 USDC (6 decimals)
 export const ONE_USDC = 10n ** 6n;
 
 export function formatUsdc(amount: bigint): string {
-  const dollars = Number(amount) / 1_000_000;
-  return dollars.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  // NEW-FL-6: avoid Number() precision loss for large amounts
+  const whole = amount / 1_000_000n;
+  const frac = amount % 1_000_000n;
+  const fracStr = frac.toString().padStart(6, "0").slice(0, 2);
+  return Number(whole).toLocaleString("en-US") + "." + fracStr;
 }
 
 export function formatProbability(

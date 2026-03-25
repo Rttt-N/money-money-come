@@ -67,7 +67,7 @@ export function useUserInfo() {
     },
   });
 
-  const { data: nftBalance } = useReadContract({
+  const { data: nftBalance, refetch: refetchNFT } = useReadContract({
     address: addresses?.ticketNFT,
     abi: TICKET_NFT_ABI,
     functionName: "balanceOf",
@@ -80,7 +80,7 @@ export function useUserInfo() {
 
   // BUG-04: return Promise so callers can await actual data refresh
   const refetch = async () => {
-    await Promise.all([refetchUser(), refetchProb(), refetchUsdc(), refetchAllowance()]);
+    await Promise.all([refetchUser(), refetchProb(), refetchUsdc(), refetchAllowance(), refetchNFT()]); // NEW-FM-5: include NFT
   };
 
   return {

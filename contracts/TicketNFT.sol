@@ -89,7 +89,7 @@ contract TicketNFT is ERC721, Ownable {
 
         userRoundTicket[to][roundId] = tokenId;
 
-        _safeMint(to, tokenId);
+        _mint(to, tokenId); // NEW-CL-1: avoid reentrancy via onERC721Received callback
 
         emit TicketMinted(to, tokenId, roundId, tier1Amount, tier2Amount, tier3Amount);
     }
@@ -121,6 +121,17 @@ contract TicketNFT is ERC721, Ownable {
 
     function totalSupply() external view returns (uint256) {
         return _nextTokenId - _burnedCount; // L-2: circulating supply only
+    }
+
+    // ─── Soulbound: block transfers (NEW-CL-6) ────────────────────────────────
+
+    function _update(address to, uint256 tokenId, address auth)
+        internal override returns (address)
+    {
+        address from = _ownerOf(tokenId);
+        // Allow only mint (from == 0) and burn (to == 0)
+        require(from == address(0) || to == address(0), "TicketNFT: non-transferable");
+        return super._update(to, tokenId, auth);
     }
 
     // ─── Token URI (override with IPFS or on-chain SVG in production) ─────────
