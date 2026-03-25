@@ -125,3 +125,63 @@ If you are not familiar with MetaMask, follow this simplest path:
 
 ---
 
+## 8. Local Draw Testing (Full Round Lifecycle)
+
+The local environment uses mock contracts (MockAavePool, MockVRFCoordinator), so draws must be triggered manually via scripts.
+
+After deploying, the local `roundDuration` is automatically set to **300 seconds (5 min)**.
+
+### Step-by-step
+
+```bash
+# 1. Make sure Hardhat node is running and contracts are deployed (steps 3-6 above)
+
+# 2. Deposit via the frontend (/play) — at least one account must enterGame
+
+# 3. Simulate Aave yield (so there's a prize pool)
+npx hardhat run scripts/simulate-yield.ts --network localhost
+
+# 4. Advance time + trigger performUpkeep (enters DRAWING state)
+#    The script auto-reads roundDuration from the contract and advances time accordingly
+npx hardhat run scripts/run-draw.ts --network localhost
+
+# 5. Simulate VRF callback (picks winner, settles round, starts new round)
+npx hardhat run scripts/fulfill-vrf.ts --network localhost
+
+# 6. Claim prize — go to /dashboard, a “Prize Available” card appears if you won
+#    Click “Claim Prize” to transfer winnings to your wallet
+```
+
+### Notes
+
+- Prize goes to `pendingWithdrawals` mapping first (pull payment pattern). Users must call `claimPrize()` via the dashboard to receive USDC.
+- After fulfilling VRF, the contract automatically starts a new round with rollover participants.
+- If `run-draw.ts` says “Upkeep not needed”, ensure at least one account has deposited via `enterGame`.
+
+---
+
+## 9. Mint USDC to Multiple Accounts
+
+The default `mint-usdc.ts` mints to Account #0. To mint to other accounts, use `MINT_TO`:
+
+**PowerShell:**
+
+```powershell
+# Account #1 (index 1)
+$env:MINT_TO=”0x70997970C51812dc3A010C7d01b50e0d17dc79C8”; npx hardhat run scripts/mint-usdc.ts --network localhost
+
+# Account #2 (index 2)
+$env:MINT_TO=”0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC”; npx hardhat run scripts/mint-usdc.ts --network localhost
+
+# Custom amount (default is 100,000 USDC)
+$env:MINT_TO=”0x70997970C51812dc3A010C7d01b50e0d17dc79C8”; $env:MINT_AMOUNT=”50000”; npx hardhat run scripts/mint-usdc.ts --network localhost
+```
+
+**Bash / zsh:**
+
+```bash
+MINT_TO=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 npx hardhat run scripts/mint-usdc.ts --network localhost
+MINT_TO=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC npx hardhat run scripts/mint-usdc.ts --network localhost
+```
+
+---

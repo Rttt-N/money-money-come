@@ -14,6 +14,7 @@ import {
   Loader2,
   Shield,
   Crown,
+  AlertTriangle,
 } from "lucide-react";
 
 function truncateAddress(addr: string) {
@@ -30,6 +31,7 @@ export default function SquadsPage() {
   const [copied, setCopied] = useState(false);
   const [action, setAction] = useState<"none" | "create" | "join" | "leave">("none");
   const [done, setDone] = useState<"none" | "created" | "joined" | "left">("none");
+  const [txError, setTxError] = useState("");
 
   const isInSquad = squadId !== undefined && squadId !== 0n;
   const isLoading = isPending || (action !== "none" && !isSuccess);
@@ -57,12 +59,24 @@ export default function SquadsPage() {
     }
     if (id === 0n) return;
     setAction("join");
+    setTxError("");
     try {
       await joinSquad(id);
       setDone("joined");
       await refetch();
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
+      const msg = (err as { shortMessage?: string; message?: string })?.shortMessage
+        || (err as { message?: string })?.message || "";
+      if (msg.includes("not active")) {
+        setTxError("This squad does not exist or is no longer active.");
+      } else if (msg.includes("already in a squad")) {
+        setTxError("You are already in a squad. Leave your current squad first.");
+      } else if (msg.includes("squad full")) {
+        setTxError("This squad is full (max 10 members).");
+      } else {
+        setTxError("Failed to join squad. Please check the Squad ID and try again.");
+      }
     } finally {
       setAction("none");
     }
@@ -345,9 +359,9 @@ export default function SquadsPage() {
                 <input
                   type="number"
                   value={joinIdInput}
-                  onChange={(e) => setJoinIdInput(e.target.value)}
+                  onChange={(e) => { setJoinIdInput(e.target.value); setTxError(""); }}
                   placeholder="Squad ID"
-                  className="input-field"
+                  className={`input-field ${txError ? "border-red-400/50" : ""}`}
                 />
                 <button
                   onClick={handleJoin}
@@ -362,6 +376,12 @@ export default function SquadsPage() {
                   Join
                 </button>
               </div>
+              {txError && (
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {txError}
+                </p>
+              )}
             </div>
           </div>
         )}
