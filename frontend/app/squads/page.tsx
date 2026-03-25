@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useSquad } from "@/hooks/useSquad";
 import { useUserInfo } from "@/hooks/useUserInfo";
+import { SQUAD_REGISTRY_ABI, getAddresses } from "@/lib/contracts";
 import {
   Users,
   Plus,
@@ -23,9 +24,10 @@ function truncateAddress(addr: string) {
 
 export default function SquadsPage() {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const { squadId, squadInfo, createSquad, joinSquad, leaveSquad, isPending, isSuccess, refetch } =
     useSquad();
-  const { userInfo } = useUserInfo();
+  const { userInfo, addresses } = useUserInfo();
 
   const [joinIdInput, setJoinIdInput] = useState("");
   const [copied, setCopied] = useState(false);
@@ -58,8 +60,32 @@ export default function SquadsPage() {
       return; // invalid input, ignore
     }
     if (id === 0n) return;
-    setAction("join");
     setTxError("");
+
+    // Pre-validate: check if squad exists and is joinable
+    if (publicClient && addresses?.squadRegistry) {
+      try {
+        const [, members, active] = await publicClient.readContract({
+          address: addresses.squadRegistry,
+          abi: SQUAD_REGISTRY_ABI,
+          functionName: "getSquad",
+          args: [id],
+        }) as [string, string[], boolean];
+        if (!active) {
+          setTxError("This squad does not exist or is no longer active.");
+          return;
+        }
+        if (members.length >= 10) {
+          setTxError("This squad is full (max 10 members).");
+          return;
+        }
+      } catch {
+        setTxError("This squad does not exist.");
+        return;
+      }
+    }
+
+    setAction("join");
     try {
       await joinSquad(id);
       setDone("joined");
