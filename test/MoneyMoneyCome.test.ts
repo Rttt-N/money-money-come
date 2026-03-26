@@ -6,24 +6,24 @@ import { network } from "hardhat";
 const ONE_USDC = 10n ** 6n; // 1 USDC = 1_000_000 (6 decimals)
 const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+// Round 1 endTime uses default 7 days from constructor; subsequent rounds use setRoundDuration(2)
+const ROUND1_WAIT = 7 * 86400 + 1; // 7 days + 1 second to pass round 1 endTime
+const ROUND_WAIT = 11; // for rounds after round 1 (duration = 10 seconds)
 
-describe("MoneyMoneyCome", async function () {
+describe("MoneyMoneyCome — 46 Test Cases", async function () {
   const { viem, provider } = await network.connect();
 
   // ── 部署所有合约 ──────────────────────────────────────────────────────────
   async function deployAll() {
     const [owner, user1, user2, user3] = await viem.getWalletClients();
 
-    // 1. Mock 合约
     const mockUSDC = await viem.deployContract("MockUSDC");
     const mockAavePool = await viem.deployContract("MockAavePool", [mockUSDC.address]);
     const mockVRF = await viem.deployContract("MockVRFCoordinator");
 
-    // 2. MockAToken（由 MockAavePool 在构造函数中部署）
     const aTokenAddress = await mockAavePool.read.aToken();
     const mockAToken = await viem.getContractAt("MockAToken", aTokenAddress);
 
-    // 3. 核心合约
     const vault = await viem.deployContract("YieldVault", [
       mockUSDC.address,
       mockAavePool.address,
@@ -35,7 +35,6 @@ describe("MoneyMoneyCome", async function () {
     ]);
     const ticketNFT = await viem.deployContract("TicketNFT", [owner.account.address]);
 
-    // 4. 主合约
     const mmc = await viem.deployContract("MoneyMoneyCome", [
       mockUSDC.address,
       vault.address,
@@ -43,35 +42,26 @@ describe("MoneyMoneyCome", async function () {
       squadRegistry.address,
       mockVRF.address,
       BYTES32_ZERO,
-      1n, // subscriptionId
+      1n,
       owner.account.address,
     ]);
 
-    // 5. ⚠️ 必须将 YieldVault 和 TicketNFT 的所有权转给主合约
-    //    否则主合约调用 vault.deposit/redeem 和 ticketNFT.mint/burn 时会 revert
     await vault.write.transferOwnership([mmc.address]);
     await ticketNFT.write.transferOwnership([mmc.address]);
 
+    // Set short round duration for testing (default is 7 days)
+    await mmc.write.setRoundDuration([10n]);
+
     return {
-      mmc,
-      vault,
-      ticketNFT,
-      squadRegistry,
-      mockUSDC,
-      mockAavePool,
-      mockVRF,
-      mockAToken,
-      owner,
-      user1,
-      user2,
-      user3,
+      mmc, vault, ticketNFT, squadRegistry,
+      mockUSDC, mockAavePool, mockVRF, mockAToken,
+      owner, user1, user2, user3,
     };
   }
 
   type Ctx = Awaited<ReturnType<typeof deployAll>>;
   type WalletClient = Ctx["user1"];
 
-  // ── 辅助：铸造 USDC + 授权 + 调用 enterGame ───────────────────────────────
   async function enterGame(
     ctx: Ctx,
     user: WalletClient,
@@ -80,66 +70,51 @@ describe("MoneyMoneyCome", async function () {
     squadId = 0n,
   ) {
     await ctx.mockUSDC.write.mint([user.account.address, amount]);
-    await ctx.mockUSDC.write.approve([ctx.mmc.address, amount], {
-      account: user.account,
-    });
-    await ctx.mmc.write.enterGame([amount, tier, squadId], {
-      account: user.account,
-    });
+    await ctx.mockUSDC.write.approve([ctx.mmc.address, amount], { account: user.account });
+    await ctx.mmc.write.enterGame([amount, tier, squadId], { account: user.account });
   }
 
-  // ── 辅助：模拟 Aave 利息 ──────────────────────────────────────────────────
-  //   同时给 MockAavePool 充值等额 USDC，确保取款时池子有足够余额
   async function simulateYield(ctx: Ctx, amount: bigint) {
     await ctx.mockAToken.write.simulateYield([ctx.vault.address, amount]);
     await ctx.mockUSDC.write.mint([ctx.mockAavePool.address, amount]);
   }
 
-  // ── 辅助：快进 EVM 时间 ────────────────────────────────────────────────────
   async function increaseTime(seconds: number) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (provider as any).request({
-      method: "evm_increaseTime",
-      params: [seconds],
-    });
+    await (provider as any).request({ method: "evm_increaseTime", params: [seconds] });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (provider as any).request({ method: "evm_mine", params: [] });
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // 1. Deployment — 基础部署检查
+  // TC-01 ~ TC-02  Deployment
   // ════════════════════════════════════════════════════════════════════════
-  describe("Deployment", async function () {
-    it("should start at round 1 in OPEN state", async function () {
+  describe("TC-01~02: Deployment", async function () {
+    it("TC-01: should start at round 1 in OPEN state", async function () {
       const ctx = await deployAll();
-
       const round = await ctx.mmc.read.currentRound();
       assert.equal(round, 1n);
-
       const info = await ctx.mmc.read.getCurrentRoundInfo();
-      assert.equal(info.state, 0); // RoundState.OPEN = 0
+      assert.equal(info.state, 0); // RoundState.OPEN
     });
 
-    it("YieldVault and TicketNFT owner should be the main contract", async function () {
+    it("TC-02: YieldVault and TicketNFT owner should be the main contract", async function () {
       const ctx = await deployAll();
-
       const vaultOwner = await ctx.vault.read.owner();
       const nftOwner = await ctx.ticketNFT.read.owner();
-
       assert.equal(vaultOwner.toLowerCase(), ctx.mmc.address.toLowerCase());
       assert.equal(nftOwner.toLowerCase(), ctx.mmc.address.toLowerCase());
     });
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 2. enterGame — 存款逻辑
+  // TC-03 ~ TC-07  enterGame
   // ════════════════════════════════════════════════════════════════════════
-  describe("enterGame", async function () {
-    it("should update user principal and tier amounts correctly", async function () {
+  describe("TC-03~07: enterGame", async function () {
+    it("TC-03: should update user principal and tier amounts correctly", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 2);
-
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, amount);
       assert.equal(info.tier1Amount, 0n);
@@ -147,371 +122,244 @@ describe("MoneyMoneyCome", async function () {
       assert.equal(info.tier3Amount, 0n);
     });
 
-    it("should mint an NFT ticket on deposit", async function () {
+    it("TC-04: should mint an NFT ticket on deposit", async function () {
       const ctx = await deployAll();
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
-
-      const balance = await ctx.ticketNFT.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
+      const balance = await ctx.ticketNFT.read.balanceOf([ctx.user1.account.address]);
       assert.equal(balance, 1n);
     });
 
-    it("Tier 1 weight = 10% of deposit, Tier 3 weight = 100% of deposit", async function () {
+    it("TC-05: Tier 1 weight = 10% of deposit, Tier 3 weight = 100% of deposit", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
-
-      // Tier 1: weightMultiplierBps = 1000 → weight = 100 * 10% = 10 USDC
       await enterGame(ctx, ctx.user1, amount, 1);
       const u1 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(u1.weightBps, 10n * ONE_USDC);
-
-      // Tier 3: weightMultiplierBps = 10000 → weight = 100 * 100% = 100 USDC
       await enterGame(ctx, ctx.user2, amount, 3);
       const u2 = await ctx.mmc.read.getUserInfo([ctx.user2.account.address]);
       assert.equal(u2.weightBps, 100n * ONE_USDC);
     });
 
-    it("should revert if deposit is below minimum (10 USDC)", async function () {
+    it("TC-06: should revert if deposit is below minimum (10 USDC)", async function () {
       const ctx = await deployAll();
-      const tooLittle = 5n * ONE_USDC; // 5 USDC < 10 USDC min
+      const tooLittle = 5n * ONE_USDC;
       await ctx.mockUSDC.write.mint([ctx.user1.account.address, tooLittle]);
-      await ctx.mockUSDC.write.approve([ctx.mmc.address, tooLittle], {
-        account: ctx.user1.account,
-      });
-
+      await ctx.mockUSDC.write.approve([ctx.mmc.address, tooLittle], { account: ctx.user1.account });
       await assert.rejects(async () => {
-        await ctx.mmc.write.enterGame([tooLittle, 1, 0n], {
-          account: ctx.user1.account,
-        });
+        await ctx.mmc.write.enterGame([tooLittle, 1, 0n], { account: ctx.user1.account });
       });
     });
 
-    it("should allow top-up deposit in same round (blended per-tier amounts)", async function () {
+    it("TC-07: should allow top-up deposit in same round (blended per-tier amounts)", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 1);
-
-      // Top up with another 100 USDC at Tier 2 (each deposit keeps its own tier)
       await enterGame(ctx, ctx.user1, amount, 2);
-
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, 200n * ONE_USDC);
       assert.equal(info.tier1Amount, 100n * ONE_USDC);
       assert.equal(info.tier2Amount, 100n * ONE_USDC);
       assert.equal(info.tier3Amount, 0n);
-
-      // Blended weight: (100*1000 + 100*5000) / 10000 = 60 USDC
       assert.equal(info.weightBps, 60n * ONE_USDC);
     });
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 3. withdraw — 取款逻辑
+  // TC-08 ~ TC-12  withdraw
   // ════════════════════════════════════════════════════════════════════════
-  describe("withdraw", async function () {
-    it("should return full principal to user (no yield, no penalty)", async function () {
+  describe("TC-08~12: withdraw", async function () {
+    it("TC-08: should return full principal to user (no yield, no penalty)", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 2);
-
-      const before = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
+      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
-      const after = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
+      const after = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       assert.equal(after - before, amount);
     });
 
-    it("should burn NFT ticket on full withdrawal", async function () {
+    it("TC-09: should burn NFT ticket on full withdrawal", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount, 1);
-
       await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
-
-      const balance = await ctx.ticketNFT.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
+      const balance = await ctx.ticketNFT.read.balanceOf([ctx.user1.account.address]);
       assert.equal(balance, 0n);
     });
 
-    it("should revert if user has no deposit", async function () {
+    it("TC-10: should revert if user has no deposit", async function () {
       const ctx = await deployAll();
-
       await assert.rejects(async () => {
-        await ctx.mmc.write.withdraw([100n * ONE_USDC], {
-          account: ctx.user1.account,
-        });
+        await ctx.mmc.write.withdraw([100n * ONE_USDC], { account: ctx.user1.account });
       });
     });
 
-    it("should allow two half withdrawals of full deposit (200 → 100 → 100)", async function () {
+    it("TC-11: should allow two half withdrawals of full deposit (200 → 100 → 100)", async function () {
       const ctx = await deployAll();
       const deposit = 200n * ONE_USDC;
       const half = 100n * ONE_USDC;
       await enterGame(ctx, ctx.user1, deposit, 2);
-
-      const before = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
+      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       await ctx.mmc.write.withdraw([half], { account: ctx.user1.account });
       await ctx.mmc.write.withdraw([half], { account: ctx.user1.account });
-      const after = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
+      const after = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       assert.equal(after - before, deposit);
     });
 
-    // 回归：非对称部分取款（与组员复现场景一致）
-    it("should allow uneven partial withdrawals (5002 → 3000 → 2002)", async function () {
+    it("TC-12: should allow uneven partial withdrawals (5002 → 3000 → 2002)", async function () {
       const ctx = await deployAll();
       const deposit = 5002n * ONE_USDC;
       const first = 3000n * ONE_USDC;
       const rest = 2002n * ONE_USDC;
       await enterGame(ctx, ctx.user1, deposit, 2);
-
-      const before = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
+      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       await ctx.mmc.write.withdraw([first], { account: ctx.user1.account });
       await ctx.mmc.write.withdraw([rest], { account: ctx.user1.account });
-      const after = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
+      const after = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
       assert.equal(after - before, deposit);
     });
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 4. Full Round — 完整开奖流程（最核心的测试）
-  //    存款 → 模拟利息 → 时间快进 → performUpkeep → VRF回调 → winner收款 → 新轮开始
+  // TC-13  Full Round
   // ════════════════════════════════════════════════════════════════════════
-  describe("Full Round", async function () {
-    it("should complete a full round and pay winner the prize", async function () {
+  describe("TC-13: Full Round", async function () {
+    it("TC-13: should complete a full round and pay winner the prize", async function () {
       const ctx = await deployAll();
       const amount = 200n * ONE_USDC;
       const yieldAmount = 20n * ONE_USDC;
-
-      // user1 以 Tier 3 存入（所有利息贡献给奖池，获得最高权重）
       await enterGame(ctx, ctx.user1, amount, 3);
-
-      // 模拟 Aave 利息：+20 USDC 进奖池
       await simulateYield(ctx, yieldAmount);
-
-      // ROUND_DURATION = 1 秒，快进 2 秒确保时间超过
-      await increaseTime(2);
-
-      // checkUpkeep 应返回 true（时间已到 + 有参与者）
+      await increaseTime(ROUND1_WAIT);
       const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
       assert.equal(upkeepNeeded, true);
-
-      // performUpkeep：harvest yield + 进入 DRAWING 状态 + 请求 VRF（requestId = 1）
       await ctx.mmc.write.performUpkeep(["0x"]);
-
-      // 记录 winner 当前余额（存款后为 0）
-      const balanceBefore = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
-      // MockVRF 回调（user1 是唯一参与者，任何随机数都赢）
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
-
-      const balanceAfter = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
-      // ✅ user1（Tier 3，无 squad）应收到全部 prizePool
-      assert.ok(
-        balanceAfter > balanceBefore,
-        "Winner should receive the prize",
-      );
-
-      // ✅ 新一轮已自动开始（currentRound 从 1 变为 2）
+      // Prize + yield go to pendingWithdrawals (pull payment)
+      const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
+      assert.ok(pending > 0n, "Winner should have pending prize");
+      const balanceBefore = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user1.account });
+      const balanceAfter = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      assert.ok(balanceAfter > balanceBefore, "Winner should receive the prize after claiming");
       const newRound = await ctx.mmc.read.currentRound();
       assert.equal(newRound, 2n);
     });
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 4b. Rollover — 跨轮连续参与
-  //     存款 → 完成一轮 → 验证自动加入下一轮（无需重新存款）
+  // TC-14 ~ TC-19  Rollover
   // ════════════════════════════════════════════════════════════════════════
-  describe("Rollover", async function () {
-    it("should auto-enroll user into next round after settlement", async function () {
+  describe("TC-14~19: Rollover", async function () {
+    it("TC-14: should auto-enroll user into next round after settlement", async function () {
       const ctx = await deployAll();
       const amount = 200n * ONE_USDC;
-      const yieldAmount = 20n * ONE_USDC;
-
-      // Round 1: user1 deposits as Tier 3
       await enterGame(ctx, ctx.user1, amount, 3);
-
-      // Complete round 1
-      await simulateYield(ctx, yieldAmount);
-      await increaseTime(2);
+      await simulateYield(ctx, 20n * ONE_USDC);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
-
-      // Verify new round started
-      const newRound = await ctx.mmc.read.currentRound();
-      assert.equal(newRound, 2n);
-
-      // Verify user is auto-enrolled in round 2
+      assert.equal(await ctx.mmc.read.currentRound(), 2n);
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
-      assert.equal(info.principal, amount); // Principal preserved
-      assert.equal(info.roundJoined, 2n);   // Rolled into round 2
-      assert.equal(info.loyaltyRounds, 1n); // Loyalty incremented
-
-      // Verify round 2 has the user's principal and weight
+      assert.equal(info.principal, amount);
+      assert.equal(info.roundJoined, 2n);
+      assert.equal(info.loyaltyRounds, 1n);
       const roundInfo = await ctx.mmc.read.getCurrentRoundInfo();
       assert.equal(roundInfo.totalPrincipal, amount);
       assert.ok(roundInfo.totalWeight > 0n);
-
-      // Verify participants list includes the user
       const participants = await ctx.mmc.read.getRoundParticipants([2n]);
       assert.equal(participants.length, 1);
-      assert.equal(
-        participants[0].toLowerCase(),
-        ctx.user1.account.address.toLowerCase(),
-      );
+      assert.equal(participants[0].toLowerCase(), ctx.user1.account.address.toLowerCase());
     });
 
-    it("should give loyalty bonus weight after rollover", async function () {
+    it("TC-15: should give loyalty bonus weight after rollover", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
-
-      // Round 1: Tier 3, base weight = 100 USDC, loyalty mult = 1.0
       await enterGame(ctx, ctx.user1, amount, 3);
       const infoR1 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
-      assert.equal(infoR1.weightBps, 100n * ONE_USDC); // 100 * 1.0 * 1.0
-
-      // Complete round 1
+      assert.equal(infoR1.weightBps, 100n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
-
-      // Round 2: loyalty = 1 → mult = 1.05, weight = 100 * 1.0 * 1.05 = 105
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
       assert.equal(infoR2.weightBps, 105n * ONE_USDC);
     });
 
-    it("should preserve blended tier amounts through rollover", async function () {
+    it("TC-16: should preserve blended tier amounts through rollover", async function () {
       const ctx = await deployAll();
-
-      // Round 1: 60 USDC at Tier 1 + 40 USDC at Tier 3
       await enterGame(ctx, ctx.user1, 60n * ONE_USDC, 1);
       await enterGame(ctx, ctx.user1, 40n * ONE_USDC, 3);
-
       const infoR1 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR1.tier1Amount, 60n * ONE_USDC);
       assert.equal(infoR1.tier3Amount, 40n * ONE_USDC);
-      // Blended weight: (60*1000 + 40*10000) / 10000 = 46 USDC
       assert.equal(infoR1.weightBps, 46n * ONE_USDC);
-
-      // Complete round 1
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
-
-      // Round 2: tier amounts preserved, weight recalculated with loyalty
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.tier1Amount, 60n * ONE_USDC);
       assert.equal(infoR2.tier3Amount, 40n * ONE_USDC);
       assert.equal(infoR2.principal, 100n * ONE_USDC);
       assert.equal(infoR2.loyaltyRounds, 1n);
-      // Weight with loyalty: 46 * 1.05 = 48.3 USDC
-      assert.equal(infoR2.weightBps, 48300000n); // 48.3 * 1e6
+      assert.equal(infoR2.weightBps, 48300000n);
     });
 
-    it("should accumulate loyalty across multiple rounds (round 1 → 2 → 3)", async function () {
+    it("TC-17: should accumulate loyalty across multiple rounds (1 → 2 → 3)", async function () {
       const ctx = await deployAll();
-      const amount = 100n * ONE_USDC;
-
-      // Round 1
-      await enterGame(ctx, ctx.user1, amount, 3);
-
-      // Complete round 1
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
-
-      // Round 2: loyalty = 1
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
-      assert.equal(infoR2.weightBps, 105n * ONE_USDC); // 100 * 1.05
-
-      // Complete round 2
+      assert.equal(infoR2.weightBps, 105n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND_WAIT); // round 2 uses setRoundDuration(2)
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([2n, 0n]);
-
-      // Round 3: loyalty = 2 → mult = 1.10
       const infoR3 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR3.loyaltyRounds, 2n);
       assert.equal(infoR3.roundJoined, 3n);
-      assert.equal(infoR3.weightBps, 110n * ONE_USDC); // 100 * 1.10
+      assert.equal(infoR3.weightBps, 110n * ONE_USDC);
     });
 
-    it("should reset loyalty to 0 when user fully withdraws and re-enters", async function () {
+    it("TC-18: should reset loyalty to 0 when user fully withdraws and re-enters", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
-
-      // Round 1: deposit at Tier 3
       await enterGame(ctx, ctx.user1, amount, 3);
-
-      // Complete round 1 → loyalty becomes 1
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
-
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
-
-      // Full withdraw in round 2 → loyalty resets to 0
       await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
       const afterWithdraw = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(afterWithdraw.loyaltyRounds, 0n);
-
-      // Re-enter in round 2 → should have loyalty 0, no bonus
       await enterGame(ctx, ctx.user1, amount, 3);
       const afterReenter = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(afterReenter.loyaltyRounds, 0n);
-      assert.equal(afterReenter.weightBps, 100n * ONE_USDC); // 100 * 1.0 * 1.0 (no loyalty bonus)
+      assert.equal(afterReenter.weightBps, 100n * ONE_USDC);
     });
 
-    it("should NOT rollover user who fully withdrew", async function () {
+    it("TC-19: should NOT rollover user who fully withdrew", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
-
       await enterGame(ctx, ctx.user1, amount, 3);
-      // Withdraw everything during OPEN
       await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
-
-      // Complete round 1 (need another participant)
       await enterGame(ctx, ctx.user2, amount, 3);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
-
-      // Round 2: user1 should NOT be enrolled
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, 0n);
-      assert.equal(info.roundJoined, 1n); // Not updated to round 2
-
+      assert.equal(info.roundJoined, 1n);
       const participants = await ctx.mmc.read.getRoundParticipants([2n]);
-      // Only user2 should be rolled over
       const user1InRound2 = participants.some(
         (p: string) => p.toLowerCase() === ctx.user1.account.address.toLowerCase(),
       );
@@ -520,57 +368,38 @@ describe("MoneyMoneyCome", async function () {
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 4c. Blended Tier — 混合 tier 权重和利息计算
+  // TC-20 ~ TC-23  Blended Tier
   // ════════════════════════════════════════════════════════════════════════
-  describe("Blended Tier", async function () {
-    it("should calculate blended weight from multiple tiers", async function () {
+  describe("TC-20~23: Blended Tier", async function () {
+    it("TC-20: should calculate blended weight from multiple tiers", async function () {
       const ctx = await deployAll();
-
-      // 50 USDC at Tier 1 (weight mult 0.1) + 50 USDC at Tier 3 (weight mult 1.0)
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 3);
-
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, 100n * ONE_USDC);
-      // Blended weight: (50*1000 + 50*10000) / 10000 = 55 USDC
       assert.equal(info.weightBps, 55n * ONE_USDC);
     });
 
-    it("should harvest yield using blended retain rate", async function () {
+    it("TC-21: should harvest yield using blended retain rate", async function () {
       const ctx = await deployAll();
-
-      // 50 USDC at Tier 1 (retain 90%) + 50 USDC at Tier 3 (retain 0%)
-      // Blended retain = (50*9000 + 50*0) / 100 = 4500 bps = 45%
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
       await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 3);
-
-      // Simulate 10 USDC yield
       await simulateYield(ctx, 10n * ONE_USDC);
-
-      // Record user balance before harvest
-      const beforeHarvest = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
-      // Trigger harvest via performUpkeep
-      await increaseTime(2);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-
-      // After harvest, user should have received exactly 45% of 10 USDC yield = 4.5 USDC
-      const afterHarvest = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-      const userReceived = afterHarvest - beforeHarvest;
-
-      // Exact: 4_500_000 (4.5 USDC), allow ±0.01 USDC for ERC4626 rounding
+      // NEW-CH-1: yield now goes to pendingWithdrawals (pull payment)
+      const pendingYield = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
       const expected = 4_500_000n;
-      const tolerance = 10_000n; // 0.01 USDC
+      const tolerance = 10_000n;
       assert.ok(
-        userReceived >= expected - tolerance && userReceived <= expected + tolerance,
-        `User should receive ~4.5 USDC retained yield, got ${Number(userReceived) / 1e6}`,
+        pendingYield >= expected - tolerance && pendingYield <= expected + tolerance,
+        `User should have ~4.5 USDC pending yield, got ${Number(pendingYield) / 1e6}`,
       );
-
-      // Verify prizePool received the rest (~5.5 USDC)
+      // Claim and verify balance change
+      const beforeClaim = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user1.account });
+      const afterClaim = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      assert.equal(afterClaim - beforeClaim, pendingYield);
       const roundInfo = await ctx.mmc.read.getCurrentRoundInfo();
       assert.ok(
         roundInfo.prizePool >= 5_400_000n && roundInfo.prizePool <= 5_600_000n,
@@ -578,41 +407,25 @@ describe("MoneyMoneyCome", async function () {
       );
     });
 
-    it("should reduce tier amounts and weight proportionally on partial withdrawal", async function () {
+    it("TC-22: should reduce tier amounts and weight proportionally on partial withdrawal", async function () {
       const ctx = await deployAll();
-
-      // 100 USDC at Tier 1 + 200 USDC at Tier 3
       await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 1);
       await enterGame(ctx, ctx.user1, 200n * ONE_USDC, 3);
-
-      // Before: weight = (100*1000 + 200*10000) / 10000 = 210 USDC
       const infoBefore = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoBefore.weightBps, 210n * ONE_USDC);
-
-      // Withdraw 150 USDC (50% of 300 total)
-      await ctx.mmc.write.withdraw([150n * ONE_USDC], {
-        account: ctx.user1.account,
-      });
-
+      await ctx.mmc.write.withdraw([150n * ONE_USDC], { account: ctx.user1.account });
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, 150n * ONE_USDC);
-      // Proportional: tier1 = 100 - (100*150/300) = 50, tier3 = 200 - (200*150/300) = 100
       assert.equal(info.tier1Amount, 50n * ONE_USDC);
       assert.equal(info.tier3Amount, 100n * ONE_USDC);
-      // Weight reduced proportionally: 210 - (210*150/300) = 105 USDC
       assert.equal(info.weightBps, 105n * ONE_USDC);
     });
 
-    it("should zero all tier amounts on full withdrawal", async function () {
+    it("TC-23: should zero all tier amounts on full withdrawal", async function () {
       const ctx = await deployAll();
-
       await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 1);
       await enterGame(ctx, ctx.user1, 200n * ONE_USDC, 3);
-
-      await ctx.mmc.write.withdraw([300n * ONE_USDC], {
-        account: ctx.user1.account,
-      });
-
+      await ctx.mmc.write.withdraw([300n * ONE_USDC], { account: ctx.user1.account });
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, 0n);
       assert.equal(info.tier1Amount, 0n);
@@ -622,83 +435,337 @@ describe("MoneyMoneyCome", async function () {
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 5. Withdraw with Penalty — 锁定期惩罚
-  //    DRAWING 状态下取款：只拿回本金，利息被没收进奖池
+  // TC-24  Withdraw with Penalty
   // ════════════════════════════════════════════════════════════════════════
-  describe("Withdraw with Penalty", async function () {
-    it("should return only principal when withdrawing during DRAWING phase", async function () {
+  describe("TC-24: Withdraw with Penalty", async function () {
+    it("TC-24: should revert when withdrawing during DRAWING phase (NEW-CM-2)", async function () {
       const ctx = await deployAll();
       const amount = 100n * ONE_USDC;
-      const yieldAmount = 10n * ONE_USDC;
-
-      await enterGame(ctx, ctx.user1, amount, 2); // Tier 2: 50/50 分利息
-      await simulateYield(ctx, yieldAmount);
-
-      // 进入 DRAWING 状态
-      await increaseTime(2);
-      await ctx.mmc.write.performUpkeep(["0x"]);
-
-      // 在 DRAWING 状态下取款
-      const before = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-      await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
-      const after = await ctx.mockUSDC.read.balanceOf([
-        ctx.user1.account.address,
-      ]);
-
-      // ✅ 只收到本金（利息被没收，不含任何奖励）
-      assert.equal(after - before, amount);
+      await enterGame(ctx, ctx.user1, amount, 2);
+      await simulateYield(ctx, 10n * ONE_USDC);
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]); // state = DRAWING
+      // NEW-CM-2: withdrawals during DRAWING are now blocked
+      await assert.rejects(async () => {
+        await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
+      });
     });
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // 6. Squad Distribution — 80% winner + 20% 队友按 weight 分配
+  // TC-25  Squad Prize Distribution
   // ════════════════════════════════════════════════════════════════════════
-  describe("Squad prize distribution", async function () {
-    it("squad member should receive 20% of prize proportional to weight", async function () {
+  describe("TC-25: Squad Prize Distribution", async function () {
+    it("TC-25: squad member should receive 20% of prize proportional to weight", async function () {
       const ctx = await deployAll();
-
-      // user1 创建 squad，user2 加入
-      await ctx.squadRegistry.write.createSquad({
-        account: ctx.user1.account,
-      });
-      const squadId = await ctx.squadRegistry.read.userSquad([
-        ctx.user1.account.address,
-      ]);
-      await ctx.squadRegistry.write.joinSquad([squadId], {
-        account: ctx.user2.account,
-      });
-
-      // user1 Tier 3（权重 = 200 USDC，必赢）；user2 Tier 1（权重 = 5 USDC）
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user1.account });
+      const squadId = await ctx.squadRegistry.read.userSquad([ctx.user1.account.address]);
+      await ctx.squadRegistry.write.joinSquad([squadId], { account: ctx.user2.account });
       const amount1 = 200n * ONE_USDC;
       const amount2 = 50n * ONE_USDC;
       await enterGame(ctx, ctx.user1, amount1, 3, squadId);
       await enterGame(ctx, ctx.user2, amount2, 1, squadId);
-
       await simulateYield(ctx, 20n * ONE_USDC);
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      // Prize goes to pendingWithdrawals (pull payment)
+      const pending2 = await ctx.mmc.read.pendingWithdrawals([ctx.user2.account.address]);
+      assert.ok(pending2 > 0n, "Squad member should have pending prize share");
+      const user2Before = await ctx.mockUSDC.read.balanceOf([ctx.user2.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user2.account });
+      const user2After = await ctx.mockUSDC.read.balanceOf([ctx.user2.account.address]);
+      assert.ok(user2After > user2Before, "Squad member should receive 20% prize share after claiming");
+    });
+  });
 
-      await increaseTime(2);
+  // ════════════════════════════════════════════════════════════════════════
+  // TC-26 ~ TC-31  SquadRegistry
+  // ════════════════════════════════════════════════════════════════════════
+  describe("TC-26~31: SquadRegistry", async function () {
+    it("TC-26: createSquad should assign incremental squad ID starting from 1", async function () {
+      const ctx = await deployAll();
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user1.account });
+      const id = await ctx.squadRegistry.read.userSquad([ctx.user1.account.address]);
+      assert.equal(id, 1n);
+      const [leader, , active] = await ctx.squadRegistry.read.getSquad([1n]);
+      assert.equal(leader.toLowerCase(), ctx.user1.account.address.toLowerCase());
+      assert.equal(active, true);
+    });
+
+    it("TC-27: joinSquad should add caller to squad and update userSquad mapping", async function () {
+      const ctx = await deployAll();
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user1.account });
+      const id = await ctx.squadRegistry.read.userSquad([ctx.user1.account.address]);
+      await ctx.squadRegistry.write.joinSquad([id], { account: ctx.user2.account });
+      const memberCount = await ctx.squadRegistry.read.getMemberCount([id]);
+      assert.equal(memberCount, 2n);
+      const id2 = await ctx.squadRegistry.read.userSquad([ctx.user2.account.address]);
+      assert.equal(id2, id);
+    });
+
+    it("TC-28: leaveSquad should remove caller from squad and reset userSquad to 0", async function () {
+      const ctx = await deployAll();
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user1.account });
+      const id = await ctx.squadRegistry.read.userSquad([ctx.user1.account.address]);
+      await ctx.squadRegistry.write.joinSquad([id], { account: ctx.user2.account });
+      await ctx.squadRegistry.write.leaveSquad({ account: ctx.user2.account });
+      const memberCount = await ctx.squadRegistry.read.getMemberCount([id]);
+      assert.equal(memberCount, 1n);
+      const id2 = await ctx.squadRegistry.read.userSquad([ctx.user2.account.address]);
+      assert.equal(id2, 0n);
+    });
+
+    it("TC-29: squad should deactivate when the last member leaves", async function () {
+      const ctx = await deployAll();
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user1.account });
+      const id = await ctx.squadRegistry.read.userSquad([ctx.user1.account.address]);
+      await ctx.squadRegistry.write.leaveSquad({ account: ctx.user1.account });
+      const [, , active] = await ctx.squadRegistry.read.getSquad([id]);
+      assert.equal(active, false);
+    });
+
+    it("TC-30: should revert if user already in a squad tries to join another", async function () {
+      const ctx = await deployAll();
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user1.account });
+      await ctx.squadRegistry.write.createSquad({ account: ctx.user2.account });
+      const id2 = await ctx.squadRegistry.read.userSquad([ctx.user2.account.address]);
+      await assert.rejects(async () => {
+        await ctx.squadRegistry.write.joinSquad([id2], { account: ctx.user1.account });
+      });
+    });
+
+    it("TC-31: calcSquadPrize should give winner 80% and distribute remaining 20% by weight", async function () {
+      const ctx = await deployAll();
+      const totalPrize = 100n * ONE_USDC;
+      const winner = ctx.user1.account.address as `0x${string}`;
+      const addrs = [ctx.user1.account.address as `0x${string}`, ctx.user2.account.address as `0x${string}`];
+      const weights = [200n * ONE_USDC, 50n * ONE_USDC]; // user1 huge weight (winner), user2 gets 20%
+
+      const [winnerAmount, otherMembers, otherAmounts] =
+        await ctx.squadRegistry.read.calcSquadPrize([winner, totalPrize, addrs, weights]);
+
+      assert.equal(winnerAmount, 80n * ONE_USDC); // 80%
+      assert.equal(otherMembers.length, 1);
+      assert.equal(otherAmounts[0], 20n * ONE_USDC); // 20% — user2 is the only non-winner
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // TC-32 ~ TC-34  TicketNFT
+  // ════════════════════════════════════════════════════════════════════════
+  describe("TC-32~34: TicketNFT", async function () {
+    it("TC-32: mint should record correct ticket metadata (roundId and tier amounts)", async function () {
+      const ctx = await deployAll();
+      const amount = 50n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, amount, 2);
+
+      const tokenId = await ctx.ticketNFT.read.userRoundTicket([ctx.user1.account.address, 1n]);
+      assert.ok(tokenId > 0n, "Token ID should be non-zero after deposit");
+
+      const ticket = await ctx.ticketNFT.read.getTicket([tokenId]);
+      assert.equal(ticket.roundId, 1n);
+      assert.equal(ticket.tier2Amount, amount);
+      assert.equal(ticket.tier1Amount, 0n);
+      assert.equal(ticket.tier3Amount, 0n);
+    });
+
+    it("TC-33: burn should clear userRoundTicket mapping on full withdrawal", async function () {
+      const ctx = await deployAll();
+      const amount = 50n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, amount, 1);
+
+      const tokenBefore = await ctx.ticketNFT.read.userRoundTicket([ctx.user1.account.address, 1n]);
+      assert.ok(tokenBefore > 0n);
+
+      await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
+
+      const tokenAfter = await ctx.ticketNFT.read.userRoundTicket([ctx.user1.account.address, 1n]);
+      assert.equal(tokenAfter, 0n);
+    });
+
+    it("TC-34: totalSupply should increment by 1 for each mint", async function () {
+      const ctx = await deployAll();
+      const before = await ctx.ticketNFT.read.totalSupply();
+      await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user2, 50n * ONE_USDC, 2);
+      const after = await ctx.ticketNFT.read.totalSupply();
+      assert.equal(after - before, 2n);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // TC-35 ~ TC-36  YieldVault
+  // ════════════════════════════════════════════════════════════════════════
+  describe("TC-35~36: YieldVault", async function () {
+    it("TC-35: vault deposit should revert when called by a non-owner (non-MMC) address", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+      await ctx.mockUSDC.write.mint([ctx.user1.account.address, amount]);
+      await ctx.mockUSDC.write.approve([ctx.vault.address, amount], { account: ctx.user1.account });
+      await assert.rejects(async () => {
+        await ctx.vault.write.deposit([amount, ctx.user1.account.address], {
+          account: ctx.user1.account,
+        });
+      });
+    });
+
+    it("TC-36: totalAssets should equal aToken.balanceOf(vault) after deposit", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, amount, 2);
+
+      const totalAssets = await ctx.vault.read.totalAssets();
+      const aTokenBalance = await ctx.mockAToken.read.balanceOf([ctx.vault.address]);
+      assert.equal(totalAssets, aTokenBalance);
+      assert.ok(totalAssets > 0n, "totalAssets should be positive after deposit");
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // TC-37 ~ TC-46  Additional MoneyMoneyCome
+  // ════════════════════════════════════════════════════════════════════════
+  describe("TC-37~46: Additional MoneyMoneyCome", async function () {
+    it("TC-37: checkUpkeep should return false when there are no participants", async function () {
+      const ctx = await deployAll();
+      // Advance time well past ROUND_DURATION but no one deposited
+      await increaseTime(ROUND1_WAIT);
+      const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
+      assert.equal(upkeepNeeded, false);
+    });
+
+    it("TC-38: checkUpkeep should return false after performUpkeep (state is no longer OPEN)", async function () {
+      const ctx = await deployAll();
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]); // round → DRAWING
+      // checkUpkeep should now be false (state != OPEN)
+      const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
+      assert.equal(upkeepNeeded, false);
+    });
+
+    it("TC-39: withdraw should revert if amount exceeds user principal", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, amount, 2);
+      await assert.rejects(async () => {
+        await ctx.mmc.write.withdraw([amount + 1n], { account: ctx.user1.account });
+      });
+    });
+
+    it("TC-40: enterGame should revert with invalid tier value (0 or 4)", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+      await ctx.mockUSDC.write.mint([ctx.user1.account.address, amount * 2n]);
+      await ctx.mockUSDC.write.approve([ctx.mmc.address, amount * 2n], { account: ctx.user1.account });
+
+      // Tier 0 is invalid
+      await assert.rejects(async () => {
+        await ctx.mmc.write.enterGame([amount, 0, 0n], { account: ctx.user1.account });
+      });
+
+      // Tier 4 is invalid
+      await assert.rejects(async () => {
+        await ctx.mmc.write.enterGame([amount, 4, 0n], { account: ctx.user1.account });
+      });
+    });
+
+    it("TC-41: getWinProbability should return correct numerator and denominator", async function () {
+      const ctx = await deployAll();
+      // user1 Tier 3 → weight 100, user2 Tier 1 → weight 10
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
+      await enterGame(ctx, ctx.user2, 100n * ONE_USDC, 1);
+
+      const [num1, denom] = await ctx.mmc.read.getWinProbability([ctx.user1.account.address]);
+      assert.equal(num1, 100n * ONE_USDC);
+      assert.equal(denom, 110n * ONE_USDC); // 100 + 10
+
+      const [num2] = await ctx.mmc.read.getWinProbability([ctx.user2.account.address]);
+      assert.equal(num2, 10n * ONE_USDC);
+    });
+
+    it("TC-42: round totalPrincipal and totalWeight should update correctly with multiple depositors", async function () {
+      const ctx = await deployAll();
+      // user1: 100 USDC Tier 3 → weight 100; user2: 100 USDC Tier 1 → weight 10
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
+      await enterGame(ctx, ctx.user2, 100n * ONE_USDC, 1);
+
+      const info = await ctx.mmc.read.getCurrentRoundInfo();
+      assert.equal(info.totalPrincipal, 200n * ONE_USDC);
+      assert.equal(info.totalWeight, 110n * ONE_USDC);
+    });
+
+    it("TC-43: prize pool should accumulate 100% of yield from Tier 3 depositor", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+      const yieldAmt = 10n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, amount, 3); // retain 0% → all yield to pool
+      await simulateYield(ctx, yieldAmt);
+      await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
 
-      // 记录 user2 余额（performUpkeep 后：_harvestYield 已经给 Tier 1 用户发了保留的利息）
-      const user2Before = await ctx.mockUSDC.read.balanceOf([
-        ctx.user2.account.address,
-      ]);
-
-      // rand=0 → 第一个累积 weight >= 0 的参与者赢（即 user1，权重最大）
-      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
-
-      const user2After = await ctx.mockUSDC.read.balanceOf([
-        ctx.user2.account.address,
-      ]);
-
-      // ✅ user2 作为 squad 队友应额外收到 20% 奖励
+      const info = await ctx.mmc.read.getCurrentRoundInfo();
+      // prizePool ≈ 10 USDC (allow ±0.01 USDC ERC4626 rounding)
       assert.ok(
-        user2After > user2Before,
-        "Squad member should receive 20% prize share",
+        info.prizePool >= 9_900_000n && info.prizePool <= 10_100_000n,
+        `Prize pool should be ~10 USDC, got ${Number(info.prizePool) / 1e6}`,
       );
+    });
+
+    it("TC-44: enterGame should revert when round is not in OPEN state (DRAWING)", async function () {
+      const ctx = await deployAll();
+      await enterGame(ctx, ctx.user1, 100n * ONE_USDC, 3);
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]); // now DRAWING
+
+      const amount = 50n * ONE_USDC;
+      await ctx.mockUSDC.write.mint([ctx.user2.account.address, amount]);
+      await ctx.mockUSDC.write.approve([ctx.mmc.address, amount], { account: ctx.user2.account });
+
+      await assert.rejects(async () => {
+        await ctx.mmc.write.enterGame([amount, 1, 0n], { account: ctx.user2.account });
+      });
+    });
+
+    it("TC-45: getRoundParticipants should list all depositors in the current round", async function () {
+      const ctx = await deployAll();
+      await enterGame(ctx, ctx.user1, 50n * ONE_USDC, 1);
+      await enterGame(ctx, ctx.user2, 50n * ONE_USDC, 2);
+      await enterGame(ctx, ctx.user3, 50n * ONE_USDC, 3);
+
+      const participants = await ctx.mmc.read.getRoundParticipants([1n]);
+      assert.equal(participants.length, 3);
+
+      const addrs = participants.map((p: string) => p.toLowerCase());
+      assert.ok(addrs.includes(ctx.user1.account.address.toLowerCase()));
+      assert.ok(addrs.includes(ctx.user2.account.address.toLowerCase()));
+      assert.ok(addrs.includes(ctx.user3.account.address.toLowerCase()));
+    });
+
+    it("TC-46: winner without a squad should receive the entire prize pool", async function () {
+      const ctx = await deployAll();
+      const amount = 100n * ONE_USDC;
+      const yieldAmt = 10n * ONE_USDC;
+
+      await enterGame(ctx, ctx.user1, amount, 3); // no squad
+      await simulateYield(ctx, yieldAmt);
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+
+      // Capture prizePool before VRF (after harvest)
+      const roundInfoBeforeVRF = await ctx.mmc.read.getCurrentRoundInfo();
+      const prizePool = roundInfoBeforeVRF.prizePool;
+      assert.ok(prizePool > 0n, "Prize pool should be positive after harvest");
+
+      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      // Prize goes to pendingWithdrawals (pull payment)
+      const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
+      // pendingWithdrawals includes prize + retained yield from harvest
+      assert.ok(pending >= prizePool, "Pending should include at least the prize pool");
+      const before = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      await ctx.mmc.write.claimPrize({ account: ctx.user1.account });
+      const after = await ctx.mockUSDC.read.balanceOf([ctx.user1.account.address]);
+      assert.equal(after - before, pending, "Sole winner should receive all pending funds");
     });
   });
 });
-

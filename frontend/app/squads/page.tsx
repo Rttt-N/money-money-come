@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useSquad } from "@/hooks/useSquad";
 import { useUserInfo } from "@/hooks/useUserInfo";
+import { SQUAD_REGISTRY_ABI, getAddresses } from "@/lib/contracts";
 import {
   Users,
   Plus,
@@ -14,6 +15,7 @@ import {
   Loader2,
   Shield,
   Crown,
+  AlertTriangle,
 } from "lucide-react";
 
 function truncateAddress(addr: string) {
@@ -22,14 +24,16 @@ function truncateAddress(addr: string) {
 
 export default function SquadsPage() {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const { squadId, squadInfo, createSquad, joinSquad, leaveSquad, isPending, isSuccess, refetch } =
     useSquad();
-  const { userInfo } = useUserInfo();
+  const { userInfo, addresses } = useUserInfo();
 
   const [joinIdInput, setJoinIdInput] = useState("");
   const [copied, setCopied] = useState(false);
   const [action, setAction] = useState<"none" | "create" | "join" | "leave">("none");
   const [done, setDone] = useState<"none" | "created" | "joined" | "left">("none");
+  const [txError, setTxError] = useState("");
 
   const isInSquad = squadId !== undefined && squadId !== 0n;
   const isLoading = isPending || (action !== "none" && !isSuccess);
@@ -48,15 +52,57 @@ export default function SquadsPage() {
   }
 
   async function handleJoin() {
-    const id = BigInt(joinIdInput || "0");
+    // NEW-FM-6: guard against non-numeric input
+    let id: bigint;
+    try {
+      id = BigInt(joinIdInput || "0");
+    } catch {
+      return; // invalid input, ignore
+    }
     if (id === 0n) return;
+    setTxError("");
+
+    // Pre-validate: check if squad exists and is joinable
+    if (publicClient && addresses?.squadRegistry) {
+      try {
+        const [, members, active] = await publicClient.readContract({
+          address: addresses.squadRegistry,
+          abi: SQUAD_REGISTRY_ABI,
+          functionName: "getSquad",
+          args: [id],
+        }) as [string, string[], boolean];
+        if (!active) {
+          setTxError("This squad does not exist or is no longer active.");
+          return;
+        }
+        if (members.length >= 10) {
+          setTxError("This squad is full (max 10 members).");
+          return;
+        }
+      } catch {
+        setTxError("This squad does not exist.");
+        return;
+      }
+    }
+
     setAction("join");
     try {
       await joinSquad(id);
       setDone("joined");
       await refetch();
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
+      const msg = (err as { shortMessage?: string; message?: string })?.shortMessage
+        || (err as { message?: string })?.message || "";
+      if (msg.includes("not active")) {
+        setTxError("This squad does not exist or is no longer active.");
+      } else if (msg.includes("already in a squad")) {
+        setTxError("You are already in a squad. Leave your current squad first.");
+      } else if (msg.includes("squad full")) {
+        setTxError("This squad is full (max 10 members).");
+      } else {
+        setTxError("Failed to join squad. Please check the Squad ID and try again.");
+      }
     } finally {
       setAction("none");
     }
@@ -280,7 +326,14 @@ export default function SquadsPage() {
                 <div className="flex justify-between">
                   <span className="text-white/50">Tier</span>
                   <span className="font-bold text-white">
-                    {["—", "Worker 🔵", "Player 🟣", "VIP 🟠"][userInfo.tier] ?? "—"}
+                    {/* BUG-02: derive from tier amounts; show combo for mixed strategy */}
+                    {(() => {
+                      const parts: string[] = [];
+                      if (userInfo.tier1Amount > 0n) parts.push("Worker 🔵");
+                      if (userInfo.tier2Amount > 0n) parts.push("Player 🟣");
+                      if (userInfo.tier3Amount > 0n) parts.push("VIP 🟠");
+                      return parts.length > 0 ? parts.join(" + ") : "—";
+                    })()}
                   </span>
                 </div>
               </div>
@@ -332,9 +385,9 @@ export default function SquadsPage() {
                 <input
                   type="number"
                   value={joinIdInput}
-                  onChange={(e) => setJoinIdInput(e.target.value)}
+                  onChange={(e) => { setJoinIdInput(e.target.value); setTxError(""); }}
                   placeholder="Squad ID"
-                  className="input-field"
+                  className={`input-field ${txError ? "border-red-400/50" : ""}`}
                 />
                 <button
                   onClick={handleJoin}
@@ -349,6 +402,12 @@ export default function SquadsPage() {
                   Join
                 </button>
               </div>
+              {txError && (
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {txError}
+                </p>
+              )}
             </div>
           </div>
         )}

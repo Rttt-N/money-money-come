@@ -5,6 +5,7 @@ import { useAccount, useWriteContract } from "wagmi";
 import { parseUnits } from "viem";
 import { useUserInfo } from "@/hooks/useUserInfo";
 import { useRoundInfo } from "@/hooks/useRoundInfo";
+import { useSquad } from "@/hooks/useSquad";
 import {
   MMC_ABI,
   ERC20_ABI,
@@ -21,12 +22,14 @@ export default function PlayPage() {
   const { address } = useAccount();
   const { userInfo, usdcBalance, usdcAllowance, addresses, refetch } = useUserInfo();
   const { roundInfo } = useRoundInfo();
+  const { squadId: userSquadId } = useSquad();
 
   const [selectedTier, setSelectedTier] = useState<1 | 2 | 3>(2);
   const [amountInput, setAmountInput] = useState("");
   const [squadIdInput, setSquadIdInput] = useState("");
   const [step, setStep] = useState<"form" | "approving" | "entering" | "done">("form");
   const [mintedTokenId, setMintedTokenId] = useState<bigint | null>(null);
+  const [txError, setTxError] = useState("");
 
   const { writeContractAsync } = useWriteContract();
 
@@ -46,16 +49,27 @@ export default function PlayPage() {
   const hasEnoughBalance = (usdcBalance ?? 0n) >= amountBig;
   const isValidAmount = amountBig >= MIN_DEPOSIT;
 
+  const inSquad = userSquadId !== undefined && userSquadId !== 0n;
+  const squadInputId = (() => {
+    try { return BigInt(squadIdInput || "0"); } catch { return 0n; }
+  })();
+  const squadError =
+    squadInputId !== 0n && (!inSquad || userSquadId !== squadInputId)
+      ? "You are not a member of this squad. Join the squad first or leave blank to play solo."
+      : "";
+
   const canSubmit =
     !!address &&
     isOpen &&
     isValidAmount &&
     hasEnoughBalance &&
+    !squadError &&
     step === "form";
 
   async function handleSubmit() {
     if (!canSubmit || !addresses) return;
-    const squadId = BigInt(squadIdInput || "0");
+    setTxError("");
+    const squadId = inSquad ? userSquadId : squadInputId;
 
     try {
       if (needsApprove) {
@@ -83,6 +97,19 @@ export default function PlayPage() {
       await refetch();
     } catch (err: unknown) {
       console.error(err);
+      const msg = (err as { shortMessage?: string; message?: string })?.shortMessage
+        || (err as { message?: string })?.message || "";
+      if (msg.includes("not in that squad")) {
+        setTxError("You are not a member of this squad. Join the squad first or leave blank.");
+      } else if (msg.includes("round not open")) {
+        setTxError("This round is not accepting deposits right now.");
+      } else if (msg.includes("round time expired")) {
+        setTxError("This round has expired. Wait for the next round.");
+      } else if (msg.includes("round full")) {
+        setTxError("This round is full (max 100 participants).");
+      } else {
+        setTxError("Transaction failed. Please try again.");
+      }
       setStep("form");
     }
   }
@@ -172,7 +199,7 @@ export default function PlayPage() {
             {TIERS.map((tier) => (
               <button
                 key={tier.id}
-                onClick={() => setSelectedTier(tier.id as 1 | 2 | 3)}
+                onClick={() => { setSelectedTier(tier.id as 1 | 2 | 3); setTxError(""); }}
                 className={`w-full rounded-2xl border p-5 text-left transition-all ${
                   selectedTier === tier.id
                     ? "border-amber-400/50 bg-amber-400/10 ring-2 ring-amber-400/20"
@@ -213,7 +240,7 @@ export default function PlayPage() {
               <input
                 type="number"
                 value={amountInput}
-                onChange={(e) => setAmountInput(e.target.value)}
+                onChange={(e) => { setAmountInput(e.target.value); setTxError(""); }}
                 placeholder="0.00"
                 min="10"
                 className="input-field pr-20 text-xl font-bold"
@@ -243,13 +270,28 @@ export default function PlayPage() {
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-white/40">
               Step 3 — Join a Squad (Optional)
             </h2>
-            <input
-              type="number"
-              value={squadIdInput}
-              onChange={(e) => setSquadIdInput(e.target.value)}
-              placeholder="Squad ID (leave blank to skip)"
-              className="input-field"
-            />
+            {inSquad ? (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                You&apos;re in Squad #{userSquadId.toString()} — it will be used automatically.
+              </div>
+            ) : (
+              <>
+                <input
+                  type="number"
+                  value={squadIdInput}
+                  onChange={(e) => { setSquadIdInput(e.target.value); setTxError(""); }}
+                  placeholder="Squad ID (leave blank to skip)"
+                  className={`input-field ${squadError ? "border-red-400/50" : ""}`}
+                />
+                {squadError && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-400">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    {squadError}
+                  </p>
+                )}
+              </>
+            )}
             <p className="mt-1.5 text-xs text-white/30">
               Squad members share 20% of the prize if anyone wins.{" "}
               <Link href="/squads" className="text-amber-400 underline">
@@ -318,6 +360,13 @@ export default function PlayPage() {
                 alreadyIn ? "Top Up Deposit" : "Enter Game"
               )}
             </button>
+
+            {txError && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-400/10 p-3 text-xs text-red-400">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {txError}
+              </div>
+            )}
           </div>
         </div>
       </div>

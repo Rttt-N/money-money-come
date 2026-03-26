@@ -84,7 +84,7 @@ contract MoneyMoneyCome is
 
     // ── Constants ────────────────────────────────────────────────────────────
 
-    uint256 public constant ROUND_DURATION    = 1;
+    uint256 public          roundDuration      = 7 days; // M-2: mutable, default 7 days
     uint256 public constant BPS_DENOM         = 10_000;
     uint256 public constant LOYALTY_BONUS_BPS = 500;
     uint256 public constant MAX_LOYALTY_MULT  = 30_000;
@@ -93,8 +93,9 @@ contract MoneyMoneyCome is
     bytes32 public immutable keyHash;
     uint256 public immutable subscriptionId;
     uint16  public constant REQUEST_CONFIRMATIONS = 3;
-    uint32  public constant CALLBACK_GAS_LIMIT    = 500_000;
+    uint32  public          callbackGasLimit       = 2_000_000; // NEW-CH-2/CL-4: mutable, increased default
     uint32  public constant NUM_WORDS             = 1;
+    uint256 public constant MAX_PARTICIPANTS      = 100; // NEW-CL-2: cap to prevent gas DoS
 
     // ── Tier configs ─────────────────────────────────────────────────────────
 
@@ -115,6 +116,7 @@ contract MoneyMoneyCome is
     mapping(address => UserInfo)        public users;
     mapping(uint256 => address[])       private _roundParticipants;
     mapping(uint256 => uint256)         private _vrfRequestToRound;
+    mapping(address => uint256)         public  pendingWithdrawals;  // H-1: pull payments
 
     // ── Events ───────────────────────────────────────────────────────────────
 
@@ -123,6 +125,8 @@ contract MoneyMoneyCome is
     event DrawRequested(uint256 indexed roundId, uint256 requestId);
     event DrawFulfilled(uint256 indexed roundId, address indexed winner, uint256 prize);
     event RoundStarted(uint256 indexed roundId, uint256 startTime, uint256 endTime);
+    event PrizeCredited(address indexed recipient, uint256 amount);
+    event PrizeClaimed(address indexed recipient, uint256 amount);
 
     // ── Constructor ──────────────────────────────────────────────────────────
 
@@ -160,9 +164,10 @@ contract MoneyMoneyCome is
         require(amount >= MIN_DEPOSIT,                          "MMC: below minimum");
         require(tier >= 1 && tier <= 3,                        "MMC: invalid tier");
         require(rounds[currentRound].state == RoundState.OPEN, "MMC: round not open");
+        require(block.timestamp < rounds[currentRound].endTime,  "MMC: round time expired"); // NEW-CM-3
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
-        usdc.approve(address(vault), amount);
+        usdc.forceApprove(address(vault), amount); // NEW-CL-5: safe for USDT-like tokens
         uint256 shares = vault.deposit(amount, address(this));
 
         UserInfo storage u = users[msg.sender];
@@ -189,6 +194,7 @@ contract MoneyMoneyCome is
             rounds[currentRound].totalWeight    += (newWeight - u.weightBps);
         } else {
             // New participant this round (fresh or rollover)
+            require(_roundParticipants[currentRound].length < MAX_PARTICIPANTS, "MMC: round full"); // NEW-CL-2
             rounds[currentRound].totalPrincipal += amount;
             rounds[currentRound].totalWeight    += newWeight;
             _roundParticipants[currentRound].push(msg.sender);
@@ -220,7 +226,8 @@ contract MoneyMoneyCome is
         require(amount <= u.principal, "MMC: exceeds principal");
 
         RoundState state = rounds[currentRound].state;
-        bool penalised   = (state == RoundState.LOCKED || state == RoundState.DRAWING);
+        require(state != RoundState.DRAWING, "MMC: draw in progress"); // NEW-CM-2: prevent weight manipulation
+        bool penalised   = (state == RoundState.LOCKED);
 
         // Full exit: redeem all shares. Otherwise (shares * amount) / principal plus ERC4626
         // redeem rounding down can make received < amount while we still try to transfer amount → revert.
@@ -277,6 +284,31 @@ contract MoneyMoneyCome is
         emit Withdrawn(msg.sender, amount, interest, penalised);
     }
 
+    // ── Admin setters ─────────────────────────────────────────────────────────
+
+    /// @notice Update round duration. Takes effect from the next round. M-2 fix.
+    function setRoundDuration(uint256 newDuration) external onlyOwner {
+        require(newDuration >= 1, "MMC: duration too short"); // min 1s for testing; use >= 1 day in production
+        roundDuration = newDuration;
+    }
+
+    /// @notice Update VRF callback gas limit. NEW-CH-2/CL-4 fix.
+    function setCallbackGasLimit(uint32 newLimit) external onlyOwner {
+        require(newLimit >= 200_000, "MMC: gas limit too low");
+        callbackGasLimit = newLimit;
+    }
+
+    // ── claimPrize (pull payment for winners) ────────────────────────────────
+
+    /// @notice Claim any pending prize credited to your address.
+    function claimPrize() external nonReentrant {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "MMC: nothing to claim");
+        pendingWithdrawals[msg.sender] = 0;
+        usdc.safeTransfer(msg.sender, amount);
+        emit PrizeClaimed(msg.sender, amount);
+    }
+
     // ── Chainlink Automation ─────────────────────────────────────────────────
 
     function checkUpkeep(bytes calldata)
@@ -294,8 +326,9 @@ contract MoneyMoneyCome is
 
     function performUpkeep(bytes calldata) external override {
         RoundInfo storage r = rounds[currentRound];
-        require(block.timestamp >= r.endTime, "MMC: round not ended");
-        require(r.state == RoundState.OPEN,   "MMC: wrong state");
+        require(block.timestamp >= r.endTime,                      "MMC: round not ended");
+        require(r.state == RoundState.OPEN,                        "MMC: wrong state");
+        require(_roundParticipants[currentRound].length > 0,       "MMC: no participants");
 
         r.state = RoundState.LOCKED;
         _harvestYield();
@@ -304,7 +337,7 @@ contract MoneyMoneyCome is
             keyHash:             keyHash,
             subId:               subscriptionId,
             requestConfirmations: REQUEST_CONFIRMATIONS,
-            callbackGasLimit:    CALLBACK_GAS_LIMIT,
+            callbackGasLimit:    callbackGasLimit,
             numWords:            NUM_WORDS,
             extraArgs:           ""
         });
@@ -327,6 +360,15 @@ contract MoneyMoneyCome is
 
         address[] storage participants = _roundParticipants[roundId];
         require(participants.length > 0, "MMC: no participants");
+
+        // H-2: Guard against division by zero if all users withdrew during DRAWING
+        if (r.totalWeight == 0) {
+            r.state = RoundState.SETTLED;
+            emit DrawFulfilled(roundId, address(0), r.prizePool);
+            _startNewRound();
+            rounds[currentRound].prizePool += r.prizePool; // carry forward to new round
+            return;
+        }
 
         uint256 rand = randomWords[0] % r.totalWeight;
         uint256 cumulative;
@@ -360,17 +402,28 @@ contract MoneyMoneyCome is
                 uint256[] memory otherAmounts
             ) = squadRegistry.calcSquadPrize(winner, prize, addrs, weights);
 
-            if (winnerAmount > 0) usdc.safeTransfer(winner, winnerAmount);
+            // H-1: use pull payments to avoid USDC blacklist freezing settlement
+            if (winnerAmount > 0) {
+                pendingWithdrawals[winner] += winnerAmount;
+                emit PrizeCredited(winner, winnerAmount);
+            }
             for (uint256 i; i < otherMembers.length; i++) {
-                if (otherAmounts[i] > 0)
-                    usdc.safeTransfer(otherMembers[i], otherAmounts[i]);
+                if (otherAmounts[i] > 0) {
+                    pendingWithdrawals[otherMembers[i]] += otherAmounts[i];
+                    emit PrizeCredited(otherMembers[i], otherAmounts[i]);
+                }
             }
         } else {
-            if (prize > 0) usdc.safeTransfer(winner, prize);
+            if (prize > 0) {
+                pendingWithdrawals[winner] += prize;
+                emit PrizeCredited(winner, prize);
+            }
         }
 
         for (uint256 i; i < participants.length; i++) {
-            users[participants[i]].loyaltyRounds++;
+            if (users[participants[i]].principal > 0) { // NEW-CM-1: skip fully withdrawn users
+                users[participants[i]].loyaltyRounds++;
+            }
         }
 
         r.state = RoundState.SETTLED;
@@ -386,7 +439,7 @@ contract MoneyMoneyCome is
         uint256 start = block.timestamp;
         rounds[currentRound] = RoundInfo({
             startTime:      start,
-            endTime:        start + ROUND_DURATION,
+            endTime:        start + roundDuration,
             totalPrincipal: 0,
             prizePool:      0,
             totalWeight:    0,
@@ -420,7 +473,7 @@ contract MoneyMoneyCome is
             }
         }
 
-        emit RoundStarted(currentRound, start, start + ROUND_DURATION);
+        emit RoundStarted(currentRound, start, start + roundDuration);
     }
 
     function _harvestYield() internal {
@@ -436,19 +489,20 @@ contract MoneyMoneyCome is
             uint256 interest     = currentValue > u.principal ? currentValue - u.principal : 0;
             if (interest == 0) continue;
 
-            uint256 retainBps    = _blendedYieldRetainBps(u);
-            uint256 userKeeps    = (interest * retainBps) / BPS_DENOM;
-            uint256 toPool       = interest - userKeeps;
-
-            // Redeem ALL interest shares so u.vaultShares only backs principal
+            // L-4: redeem first, then calculate split from actual received amount
             uint256 sharesToRedeem = vault.previewWithdraw(interest);
             if (sharesToRedeem > u.vaultShares) sharesToRedeem = u.vaultShares;
-            vault.redeem(sharesToRedeem, address(this), address(this));
+            uint256 actualReceived = vault.redeem(sharesToRedeem, address(this), address(this));
             u.vaultShares -= sharesToRedeem;
 
-            // Send user's retained yield directly
+            uint256 retainBps = _blendedYieldRetainBps(u);
+            uint256 userKeeps = (actualReceived * retainBps) / BPS_DENOM;
+            uint256 toPool    = actualReceived - userKeeps;
+
             if (userKeeps > 0) {
-                usdc.safeTransfer(addr, userKeeps);
+                // NEW-CH-1: pull payment to avoid USDC blacklist freezing entire round
+                pendingWithdrawals[addr] += userKeeps;
+                emit PrizeCredited(addr, userKeeps);
             }
 
             r.prizePool += toPool;

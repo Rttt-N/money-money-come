@@ -14,6 +14,7 @@ contract TicketNFT is ERC721, Ownable {
 
     struct TicketInfo {
         uint256 roundId;        // Which round this ticket belongs to
+        address originalOwner;  // M-1: original minter; used by burn() to clear mapping correctly
         uint256 tier1Amount;    // USDC deposited at Tier 1 (Worker)
         uint256 tier2Amount;    // USDC deposited at Tier 2 (Player)
         uint256 tier3Amount;    // USDC deposited at Tier 3 (VIP)
@@ -24,6 +25,7 @@ contract TicketNFT is ERC721, Ownable {
     // ─── State ────────────────────────────────────────────────────────────────
 
     uint256 private _nextTokenId;
+    uint256 private _burnedCount; // L-2: track burns for accurate totalSupply
 
     /// @dev tokenId → ticket metadata
     mapping(uint256 => TicketInfo) public tickets;
@@ -77,6 +79,7 @@ contract TicketNFT is ERC721, Ownable {
 
         tickets[tokenId] = TicketInfo({
             roundId:        roundId,
+            originalOwner:  to,          // M-1: record minter permanently
             tier1Amount:    tier1Amount,
             tier2Amount:    tier2Amount,
             tier3Amount:    tier3Amount,
@@ -86,7 +89,7 @@ contract TicketNFT is ERC721, Ownable {
 
         userRoundTicket[to][roundId] = tokenId;
 
-        _safeMint(to, tokenId);
+        _mint(to, tokenId); // NEW-CL-1: avoid reentrancy via onERC721Received callback
 
         emit TicketMinted(to, tokenId, roundId, tier1Amount, tier2Amount, tier3Amount);
     }
@@ -96,12 +99,14 @@ contract TicketNFT is ERC721, Ownable {
      * @param tokenId Token to burn
      */
     function burn(uint256 tokenId) external onlyOwner {
-        address owner = ownerOf(tokenId);
-        uint256 roundId = tickets[tokenId].roundId;
+        address owner         = ownerOf(tokenId);
+        address originalOwner = tickets[tokenId].originalOwner; // M-1: use original minter
+        uint256 roundId       = tickets[tokenId].roundId;
 
-        delete userRoundTicket[owner][roundId];
+        delete userRoundTicket[originalOwner][roundId]; // M-1: always clear the minter's mapping
         delete tickets[tokenId];
 
+        _burnedCount++; // L-2: track burned count
         _burn(tokenId);
 
         emit TicketBurned(tokenId, owner);
@@ -115,7 +120,18 @@ contract TicketNFT is ERC721, Ownable {
     }
 
     function totalSupply() external view returns (uint256) {
-        return _nextTokenId;
+        return _nextTokenId - _burnedCount; // L-2: circulating supply only
+    }
+
+    // ─── Soulbound: block transfers (NEW-CL-6) ────────────────────────────────
+
+    function _update(address to, uint256 tokenId, address auth)
+        internal override returns (address)
+    {
+        address from = _ownerOf(tokenId);
+        // Allow only mint (from == 0) and burn (to == 0)
+        require(from == address(0) || to == address(0), "TicketNFT: non-transferable");
+        return super._update(to, tokenId, auth);
     }
 
     // ─── Token URI (override with IPFS or on-chain SVG in production) ─────────

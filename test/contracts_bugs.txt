@@ -1,0 +1,148 @@
+Contracts Bug Report — MoneyMoneyCome
+========================================
+共发现 11 项问题：3 HIGH | 2 MEDIUM | 4 LOW | 3 INFO
+========================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HIGH SEVERITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+H-1  USDC 黑名单地址导致结算永久冻结
+--------------------------------------
+文件: MoneyMoneyCome.sol (fulfillRandomWords)
+问题: 合约在 fulfillRandomWords() 中直接将奖金 push 给获胜者：
+        usdc.transfer(winner, prize)
+      若 winner 地址被 USDC 合约列入黑名单，transfer 会 revert，
+      整个 VRF 回调失败，轮次永远卡在 DRAWING 状态，所有资金被锁。
+修复: 改用 Pull Payment 模式，获胜者主动调用 claimPrize() 领取奖金。
+      合约只记录 pendingWithdrawals[winner] += prize，
+      不在回调中直接转账。
+
+
+H-2  DRAWING 期间所有用户撤资导致除零崩溃
+------------------------------------------
+文件: MoneyMoneyCome.sol : 331 (fulfillRandomWords)
+问题: performUpkeep 和 VRF 回调之间处于 DRAWING 状态，用户仍可 withdraw。
+      若所有人撤资，totalWeight 降为 0，VRF 回调执行：
+        uint256 rand = randomWords[0] % r.totalWeight;  // ← panic: 除以 0
+      Solidity 0.8 触发 panic code 0x12，回调 revert，轮次永远冻结。
+修复: 在 fulfillRandomWords() 的取模运算前添加守卫：
+        if (r.totalWeight == 0) {
+            r.state = RoundState.SETTLED;
+            rounds[currentRound + 1].prizePool += prize; // 奖金滚入下轮
+            _startNewRound();
+            return;
+        }
+
+
+H-3  performUpkeep 可在空轮次执行，冻结协议
+--------------------------------------------
+文件: MoneyMoneyCome.sol : 295–317 (performUpkeep)
+问题: checkUpkeep() 有 participants.length > 0 的检查，
+      但 performUpkeep() 没有同等检查。
+      任何人可在轮次到期后直接调用 performUpkeep()，
+      即使没有参与者，VRF 请求仍会发出。
+      VRF 回调到来后 require(participants.length > 0) 会 revert，
+      轮次永久卡在 DRAWING 状态。
+修复: 在 performUpkeep() 中添加：
+        require(
+            _roundParticipants[currentRound].length > 0,
+            "MMC: no participants"
+        );
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MEDIUM SEVERITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+M-1  NFT 转让后再加仓会永久锁定用户
+--------------------------------------
+文件: MoneyMoneyCome.sol : 204–210, TicketNFT.sol : 99–107
+问题: 用户将 TicketNFT 转给 Alice 后再调用 enterGame() 加仓：
+      1. 查 userRoundTicket[msg.sender] 拿到旧 tokenId=5
+      2. burn(5) 时 ownerOf(5)=Alice，清除的是 Alice 的 mapping
+      3. msg.sender 的 mapping 仍指向 tokenId=5
+      4. mint 前 require(userRoundTicket[msg.sender]==0) 失败 → revert
+      用户永远无法加仓，相当于 DoS。
+修复方案 A: TicketInfo 中记录 originalOwner，burn 时使用 originalOwner 清 mapping。
+修复方案 B: 覆写 _update() 禁止 NFT 转让（推荐）：
+        require(from == address(0) || to == address(0), "non-transferable");
+
+
+M-2  ROUND_DURATION 硬编码为 1 秒，不可用于生产
+--------------------------------------------------
+文件: MoneyMoneyCome.sol : 87
+问题: uint256 public constant ROUND_DURATION = 1;
+      constant 在编译时写入字节码，部署后无法修改。
+      主网部署将导致每秒一轮，协议完全无法正常运行。
+修复: 改为可配置变量并加 onlyOwner setter：
+        uint256 public roundDuration = 7 days;
+        function setRoundDuration(uint256 d) external onlyOwner {
+            require(d >= 1 days, "Too short");
+            roundDuration = d;
+        }
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LOW SEVERITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+L-1  Squad 奖金整数截断，余额永久锁定
+--------------------------------------
+文件: SquadRegistry.sol : 152
+问题: otherAmounts[i] = (squadPool * weight) / totalOtherWeight
+      整数除法截断，每轮最多 (MAX_MEMBERS-1) wei 被锁在合约中。
+修复: 最后一个成员领取余量：
+        otherAmounts[last] = squadPool - distributed;
+
+
+L-2  totalSupply() 统计了已销毁的 Token
+-----------------------------------------
+文件: TicketNFT.sol : 117
+问题: _nextTokenId 只增不减，totalSupply() 返回历史铸造总量，
+      不是当前流通量，会误导前端和第三方工具。
+修复: 追踪 _burnedCount，totalSupply() = _nextTokenId - _burnedCount。
+
+
+L-3  Squad 队长离队后 leader 字段不更新
+-----------------------------------------
+文件: SquadRegistry.sol (_removeMember)
+问题: 队长调用 leaveSquad() 后，Squad.leader 仍指向已离队的地址，
+      getSquad() 返回过时信息。
+修复: _removeMember() 中检测：
+        if (s.leader == member && s.members.length > 0)
+            s.leader = s.members[0];
+
+
+L-4  _harvestYield() 存在微小精度损失
+--------------------------------------
+文件: MoneyMoneyCome.sol : 444–454
+问题: ERC-4626 的 previewWithdraw() 向上取整，实际赎回金额可能
+      略多于估算值，多余的 epsilon 会滞留在合约中。
+修复: 用实际收到的金额计算分配：
+        uint256 actual = vault.redeem(shares, address(this), address(this));
+        uint256 userKeeps = (actual * retainBps) / BPS_DENOM;
+        uint256 toPool = actual - userKeeps;
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFORMATIONAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+I-1  无紧急暂停机制
+  合约不继承 Pausable，发现漏洞时无法快速停止 enterGame/withdraw。
+  建议: 继承 OZ Pausable，关键函数加 whenNotPaused。
+
+I-2  对 Aave Pool 的 USDC 授权为 type(uint256).max
+  YieldVault 构造函数中设置了无限授权。若 Aave Pool 地址被攻击，
+  vault 中所有 USDC 均有被盗风险。部署前务必核验 Pool 地址。
+
+I-3  performUpkeep() 无访问控制 (设计如此)
+  任何地址均可调用 performUpkeep()，这是 Chainlink Automation 的
+  兼容要求。状态守卫在正常情况下防止滥用，但与 H-3 结合时存在风险。
+
+
+========================================
+优先修复顺序: H-1 → H-3 → H-2 → M-2 → M-1
+========================================
