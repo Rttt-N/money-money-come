@@ -20,6 +20,10 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
     const mockUSDC = await viem.deployContract("MockUSDC");
     const mockAavePool = await viem.deployContract("MockAavePool", [mockUSDC.address]);
     const mockVRF = await viem.deployContract("MockVRFCoordinator");
+    await mockVRF.write.createSubscription();
+    const [subId] = await mockVRF.read.getActiveSubscriptionIds([0n, 1n]);
+    assert.ok(subId !== undefined, "Local VRF subscription should exist");
+    await mockVRF.write.fundSubscription([subId, 1000000000000000000n]);
 
     const aTokenAddress = await mockAavePool.read.aToken();
     const mockAToken = await viem.getContractAt("MockAToken", aTokenAddress);
@@ -42,9 +46,10 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       squadRegistry.address,
       mockVRF.address,
       BYTES32_ZERO,
-      1n,
+      subId,
       owner.account.address,
     ]);
+    await mockVRF.write.addConsumer([subId, mmc.address]);
 
     await vault.write.transferOwnership([mmc.address]);
     await ticketNFT.write.transferOwnership([mmc.address]);
@@ -234,7 +239,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const [upkeepNeeded] = await ctx.mmc.read.checkUpkeep(["0x"]);
       assert.equal(upkeepNeeded, true);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 42n]);
       // Prize + yield go to pendingWithdrawals (pull payment)
       const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
       assert.ok(pending > 0n, "Winner should have pending prize");
@@ -258,7 +263,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 20n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 42n]);
       assert.equal(await ctx.mmc.read.currentRound(), 2n);
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, amount);
@@ -281,7 +286,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 10n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 0n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
       assert.equal(infoR2.weightBps, 105n * ONE_USDC);
@@ -298,7 +303,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 10n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 42n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.tier1Amount, 60n * ONE_USDC);
       assert.equal(infoR2.tier3Amount, 40n * ONE_USDC);
@@ -313,14 +318,14 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 10n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 0n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
       assert.equal(infoR2.weightBps, 105n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
       await increaseTime(ROUND_WAIT); // round 2 uses setRoundDuration(2)
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([2n, 0n]);
+      await ctx.mockVRF.write.fulfillRequest([2n, ctx.mmc.address, 0n]);
       const infoR3 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR3.loyaltyRounds, 2n);
       assert.equal(infoR3.roundJoined, 3n);
@@ -334,7 +339,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 10n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 0n]);
       const infoR2 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(infoR2.loyaltyRounds, 1n);
       await ctx.mmc.write.withdraw([amount], { account: ctx.user1.account });
@@ -355,7 +360,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 10n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 0n]);
       const info = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
       assert.equal(info.principal, 0n);
       assert.equal(info.roundJoined, 1n);
@@ -468,7 +473,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       await simulateYield(ctx, 20n * ONE_USDC);
       await increaseTime(ROUND1_WAIT);
       await ctx.mmc.write.performUpkeep(["0x"]);
-      await ctx.mockVRF.write.fulfillRequest([1n, 0n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 0n]);
       // Prize goes to pendingWithdrawals (pull payment)
       const pending2 = await ctx.mmc.read.pendingWithdrawals([ctx.user2.account.address]);
       assert.ok(pending2 > 0n, "Squad member should have pending prize share");
@@ -757,7 +762,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       const prizePool = roundInfoBeforeVRF.prizePool;
       assert.ok(prizePool > 0n, "Prize pool should be positive after harvest");
 
-      await ctx.mockVRF.write.fulfillRequest([1n, 42n]);
+      await ctx.mockVRF.write.fulfillRequest([1n, ctx.mmc.address, 42n]);
       // Prize goes to pendingWithdrawals (pull payment)
       const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
       // pendingWithdrawals includes prize + retained yield from harvest

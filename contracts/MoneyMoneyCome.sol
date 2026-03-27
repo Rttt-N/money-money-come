@@ -5,36 +5,11 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IVRFCoordinatorV2Plus } from "@chainlink/contracts/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
+import { VRFV2PlusClient } from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 import "./TicketNFT.sol";
 import "./YieldVault.sol";
 import "./SquadRegistry.sol";
-
-// ── Local interfaces instead of inheriting Chainlink; behavior unchanged ──
-
-interface IVRFCoordinatorV2Plus {
-    struct RandomWordsRequest {
-        bytes32 keyHash;
-        uint256 subId;
-        uint16  requestConfirmations;
-        uint32  callbackGasLimit;
-        uint32  numWords;
-        bytes   extraArgs;
-    }
-    function requestRandomWords(RandomWordsRequest calldata req) external returns (uint256);
-}
-
-// VRF consumer base — rawFulfillRandomWords is invoked by MockVRF
-abstract contract VRFConsumerBaseV2Plus {
-    address internal immutable vrfCoordinator;
-    constructor(address _vrfCoordinator) { vrfCoordinator = _vrfCoordinator; }
-
-    function rawFulfillRandomWords(uint256 requestId, uint256[] memory randomWords) external {
-        require(msg.sender == vrfCoordinator, "Only VRF coordinator");
-        fulfillRandomWords(requestId, randomWords);
-    }
-
-    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal virtual;
-}
 
 // Automation interface — checkUpkeep / performUpkeep
 interface AutomationCompatibleInterface {
@@ -45,12 +20,13 @@ interface AutomationCompatibleInterface {
 // ── Main contract (same logic as reference implementation) ────────────────
 
 contract MoneyMoneyCome is
-    VRFConsumerBaseV2Plus,
     AutomationCompatibleInterface,
     ReentrancyGuard,
     Ownable
 {
     using SafeERC20 for IERC20;
+
+    error OnlyCoordinatorCanFulfill(address have, address want);
 
     // ── Structs ──────────────────────────────────────────────────────────────
 
@@ -108,6 +84,7 @@ contract MoneyMoneyCome is
     TicketNFT     public immutable ticketNFT;
     SquadRegistry public immutable squadRegistry;
     IVRFCoordinatorV2Plus public immutable vrfCoord;
+    address public immutable vrfCoordinator;
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -140,7 +117,6 @@ contract MoneyMoneyCome is
         uint256 _subscriptionId,
         address initialOwner
     )
-        VRFConsumerBaseV2Plus(_vrfCoordinator)
         Ownable(initialOwner)
     {
         usdc           = IERC20(_usdc);
@@ -148,6 +124,7 @@ contract MoneyMoneyCome is
         ticketNFT      = TicketNFT(_ticketNFT);
         squadRegistry  = SquadRegistry(_squadRegistry);
         vrfCoord       = IVRFCoordinatorV2Plus(_vrfCoordinator);
+        vrfCoordinator = _vrfCoordinator;
         keyHash        = _keyHash;
         subscriptionId = _subscriptionId;
 
@@ -333,13 +310,15 @@ contract MoneyMoneyCome is
         r.state = RoundState.LOCKED;
         _harvestYield();
 
-        IVRFCoordinatorV2Plus.RandomWordsRequest memory req = IVRFCoordinatorV2Plus.RandomWordsRequest({
+        VRFV2PlusClient.RandomWordsRequest memory req = VRFV2PlusClient.RandomWordsRequest({
             keyHash:             keyHash,
             subId:               subscriptionId,
             requestConfirmations: REQUEST_CONFIRMATIONS,
             callbackGasLimit:    callbackGasLimit,
             numWords:            NUM_WORDS,
-            extraArgs:           ""
+            extraArgs:           VRFV2PlusClient._argsToBytes(
+                VRFV2PlusClient.ExtraArgsV1({ nativePayment: false })
+            )
         });
 
         uint256 requestId = vrfCoord.requestRandomWords(req);
@@ -351,8 +330,15 @@ contract MoneyMoneyCome is
 
     // ── VRF callback ─────────────────────────────────────────────────────────
 
-    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords)
-        internal override
+    function rawFulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) external {
+        if (msg.sender != vrfCoordinator) {
+            revert OnlyCoordinatorCanFulfill(msg.sender, vrfCoordinator);
+        }
+        fulfillRandomWords(requestId, randomWords);
+    }
+
+    function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords)
+        internal
     {
         uint256 roundId     = _vrfRequestToRound[requestId];
         RoundInfo storage r = rounds[roundId];

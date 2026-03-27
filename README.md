@@ -127,7 +127,7 @@ If you are not familiar with MetaMask, follow this simplest path:
 
 ## 8. Local Draw Testing (Full Round Lifecycle)
 
-The local environment uses mock contracts (MockAavePool, MockVRFCoordinator), so draws must be triggered manually via scripts.
+The local environment uses mock contracts (MockAavePool, Chainlink VRF v2.5 mock via `MockVRFCoordinator`), so draws must be triggered manually via scripts.
 
 After deploying, the local `roundDuration` is automatically set to **300 seconds (5 min)**.
 

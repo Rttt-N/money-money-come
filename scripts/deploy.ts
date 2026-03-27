@@ -84,11 +84,19 @@ async function main() {
     const mockVRF = await viem.deployContract("MockVRFCoordinator");
     console.log("  MockVRFCoordinator :", mockVRF.address);
 
+    await mockVRF.write.createSubscription();
+    const [localSubId] = await mockVRF.read.getActiveSubscriptionIds([0n, 1n]);
+    if (localSubId === undefined) {
+      throw new Error("Failed to create local VRF subscription");
+    }
+    await mockVRF.write.fundSubscription([localSubId, 1000000000000000000n]);
+    console.log("  Mock VRF Sub ID    :", localSubId.toString());
+
     usdcAddress  = mockUSDC.address;
     aavePoolAddr = mockAavePool.address;
     vrfCoordAddr = mockVRF.address;
     vrfKeyHash   = "0x0000000000000000000000000000000000000000000000000000000000000000";
-    vrfSubId     = 1n;
+    vrfSubId     = localSubId;
 
   } else {
     // Sepolia — 使用真实合约
@@ -149,6 +157,12 @@ async function main() {
     deployer.account.address,
   ]);
   console.log("  MoneyMoneyCome     :", mmc.address);
+
+  if (isLocal) {
+    const mockVRF = await viem.getContractAt("MockVRFCoordinator", vrfCoordAddr);
+    await mockVRF.write.addConsumer([vrfSubId, mmc.address]);
+    console.log("  VRF Consumer Added :", mmc.address);
+  }
 
   // ── Step 3: 转移所有权 ───────────────────────────────────────────────────────
 

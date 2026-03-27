@@ -67,12 +67,11 @@ async function main() {
   }
 
   const mockVRF = await viem.getContractAt("MockVRFCoordinator", vrfAddress);
-  await mockVRF.write.fulfillRequest([requestId, randomWord]);
-  console.log(`fulfillRequest success. requestId=${requestId.toString()} randomWord=${randomWord.toString()}`);
+  await mockVRF.write.fulfillRequest([requestId, mmcAddress, randomWord]);
+  console.log(`fulfillRequest success. requestId=${requestId.toString()} consumer=${mmcAddress} randomWord=${randomWord.toString()}`);
 }
 
 main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

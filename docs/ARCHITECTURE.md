@@ -17,7 +17,7 @@ flowchart LR
     SQUAD[SquadRegistry<br/>Squad Membership + Prize Split]
     USDC[MockUSDC<br/>Local Stablecoin]
     AAVE[MockAavePool + MockAToken<br/>Local Yield Source]
-    VRF[MockVRFCoordinator<br/>Randomness Provider]
+    VRF[Chainlink VRF v2.5 Mock<br/>Randomness Provider]
 
     SCRIPTS[Hardhat Scripts<br/>deploy / mint-usdc / run-draw]
     TESTS[Hardhat + Foundry Tests]
@@ -62,7 +62,7 @@ flowchart LR
 - `contracts/YieldVault.sol`: vault layer that holds user funds and routes them into the Aave-like pool.
 - `contracts/TicketNFT.sol`: NFT receipt for participation in a round.
 - `contracts/SquadRegistry.sol`: team membership and squad payout calculation.
-- `contracts/mocks/`: local-only mocks for USDC, Aave, and VRF.
+- `contracts/mocks/`: local-only mocks for USDC, Aave, and a wrapper around Chainlink's VRF v2.5 mock.
 - `scripts/`: local development and demo helpers.
 - `test/`: automated verification for the main protocol flow.
 
@@ -76,7 +76,7 @@ sequenceDiagram
     participant MMC as MoneyMoneyCome
     participant Vault as YieldVault
     participant Aave as MockAavePool
-    participant VRF as MockVRFCoordinator
+    participant VRF as Chainlink VRF v2.5 Mock
     participant NFT as TicketNFT
     participant Squad as SquadRegistry
 
@@ -155,7 +155,7 @@ flowchart TB
 
     subgraph L5["Testing and Simulation"]
         direction LR
-        MOCKS["MockUSDC + MockAavePool + MockVRFCoordinator"]
+        MOCKS["MockUSDC + MockAavePool + Chainlink VRF v2.5 Mock"]
     end
 
     FE --> APP
