@@ -9,7 +9,6 @@
  *   2. 将 MoneyMoneyCome 地址添加为 VRF Consumer:
  *      https://vrf.chain.link/sepolia → 你的订阅 → Add Consumer
  *   3. 订阅中至少有 2 LINK
- *   4. 从 https://faucets.chain.link/sepolia-aave 获取测试 USDC
  *
  * .env 必填:
  *   SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
@@ -19,6 +18,7 @@
  * 可选:
  *   DEPOSIT_USDC=100   # 存入金额 (默认 100 USDC)
  *   TIER=3             # 参与等级 1/2/3 (默认 3, VIP)
+ *   YIELD_USDC=50      # 手动注入额外利息 (默认 50 USDC)
  *
  * 用法:
  *   npx hardhat run scripts/demo.ts --network sepolia
@@ -27,9 +27,7 @@
 import { network } from "hardhat";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { viem } = await network.connect();
 
 // ── 工具函数 ─────────────────────────────────────────────────────────────────
@@ -61,7 +59,7 @@ function sleep(ms: number) {
 // ── 读取已部署地址 ─────────────────────────────────────────────────────────
 
 function loadAddresses(chainId: number) {
-  const addressesPath = path.join(__dirname, "../frontend/lib/addresses.json");
+  const addressesPath = path.join(process.cwd(), "frontend/lib/addresses.json");
   if (!fs.existsSync(addressesPath)) {
     throw new Error(
       `addresses.json not found. Run deploy first:\n  npx hardhat run scripts/deploy.ts --network sepolia`
@@ -71,7 +69,7 @@ function loadAddresses(chainId: number) {
   const addrs = all[chainId.toString()];
   if (!addrs?.mmc) {
     throw new Error(
-      `No Sepolia deployment found in addresses.json (chainId ${chainId}).\n` +
+      `No deployment found in addresses.json (chainId ${chainId}).\n` +
         `Run: npx hardhat run scripts/deploy.ts --network sepolia`
     );
   }
@@ -81,6 +79,7 @@ function loadAddresses(chainId: number) {
     vault: `0x${string}`;
     squadRegistry: `0x${string}`;
     ticketNFT: `0x${string}`;
+    mockAToken?: `0x${string}`;
   };
 }
 
@@ -108,23 +107,23 @@ async function main() {
 
   const addrs = loadAddresses(chainId);
   console.log(`  MoneyMoneyCome : ${addrs.mmc}`);
-  console.log(`  USDC           : ${addrs.usdc}`);
+  console.log(`  MockUSDC       : ${addrs.usdc}`);
   console.log(`  YieldVault     : ${addrs.vault}`);
   console.log(`  SquadRegistry  : ${addrs.squadRegistry}`);
   console.log(`  TicketNFT      : ${addrs.ticketNFT}`);
   console.log();
 
   const mmc       = await viem.getContractAt("MoneyMoneyCome", addrs.mmc);
-  const usdc      = await viem.getContractAt("MockUSDC",       addrs.usdc);   // ERC-20 ABI compatible
+  const usdc      = await viem.getContractAt("MockUSDC",       addrs.usdc);
   const ticketNFT = await viem.getContractAt("TicketNFT",      addrs.ticketNFT);
 
-  // ── 2. 账户状态检查 ──────────────────────────────────────────────────────
+  // ── 2. 账户状态检查 + 自动 Mint ────────────────────────────────────────────
 
-  header("STEP 2 — Account Status");
+  header("STEP 2 — Account Status & Auto-Mint");
 
   const playerAddr = player.account.address;
   const ethBalance = await publicClient.getBalance({ address: playerAddr });
-  const usdcBalance = await usdc.read.balanceOf([playerAddr]);
+  let usdcBalance = await usdc.read.balanceOf([playerAddr]);
   const depositRaw = depositUsdc * ONE_USDC;
 
   console.log(`  Player         : ${playerAddr}`);
@@ -134,10 +133,15 @@ async function main() {
   console.log();
 
   if (usdcBalance < depositRaw) {
-    throw new Error(
-      `Insufficient USDC: have ${fmt(usdcBalance)}, need ${fmt(depositRaw)}.\n` +
-        `Get test USDC from: https://faucets.chain.link/sepolia-aave`
+    console.log(`  Insufficient USDC. Minting ${fmt(depositRaw)} MockUSDC...`);
+    const mintTx = await usdc.write.mint(
+      [playerAddr, depositRaw],
+      { account: player.account }
     );
+    await publicClient.waitForTransactionReceipt({ hash: mintTx });
+    usdcBalance = await usdc.read.balanceOf([playerAddr]);
+    console.log(`  ✓ Minted. New USDC balance: ${fmt(usdcBalance)}`);
+    console.log();
   }
 
   // ── 3. 查看当前轮次 ──────────────────────────────────────────────────────
@@ -145,14 +149,16 @@ async function main() {
   header("STEP 3 — Current Round Info");
 
   const roundInfo = await mmc.read.getCurrentRoundInfo();
+  const theRoundId = await mmc.read.currentRound();
   const stateNames = ["OPEN", "LOCKED", "DRAWING", "SETTLED"];
   const stateName = stateNames[roundInfo.state] ?? "UNKNOWN";
 
-  console.log(`  Round ID       : #${roundInfo.roundId}`);
+  console.log(`  Round ID       : #${theRoundId}`);
   console.log(`  State          : ${stateName}`);
   console.log(`  Total Principal: ${fmt(roundInfo.totalPrincipal)}`);
   console.log(`  Prize Pool     : ${fmt(roundInfo.prizePool)}`);
-  console.log(`  Participants   : ${roundInfo.participantCount}`);
+  const roundParticipants = await mmc.read.getRoundParticipants([theRoundId]);
+  console.log(`  Participants   : ${roundParticipants.length}`);
   console.log();
 
   if (roundInfo.state !== 0) {
@@ -162,35 +168,72 @@ async function main() {
     process.exit(0);
   }
 
-  // ── 4. Approve & Enter Game ──────────────────────────────────────────────
+  // Check if round has already expired (can't enterGame, go straight to draw)
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const roundExpired = nowSec >= roundInfo.endTime;
 
-  header("STEP 4 — Approve USDC & Enter Game");
+  if (roundExpired) {
+    console.log(`  ⚠  Round #${theRoundId} has already expired (endTime passed).`);
+    console.log(`     Skipping enterGame — proceeding directly to draw.`);
+    console.log(`     Participants already in round: ${roundParticipants.length}`);
+    if (roundParticipants.length === 0) {
+      console.log(`  ❌ No participants in expired round — cannot draw. Deploy a fresh contract.`);
+      process.exit(1);
+    }
+    console.log();
+  } else {
+    // ── 4. Approve & Enter Game ────────────────────────────────────────────
 
-  const tierLabels = ["", "Worker (retain 90%, weight 0.1×)", "Player (retain 50%, weight 0.5×)", "VIP (retain 0%, weight 1.0×)"];
+    header("STEP 4 — Approve USDC & Enter Game");
 
-  console.log(`  Approving ${fmt(depositRaw)} USDC for MoneyMoneyCome...`);
-  const approveTx = await usdc.write.approve(
-    [addrs.mmc, depositRaw],
-    { account: player.account }
-  );
-  await publicClient.waitForTransactionReceipt({ hash: approveTx });
-  console.log(`  ✓ Approve confirmed: ${approveTx}`);
+    const tierLabels = ["", "Worker (retain 90%, weight 0.1×)", "Player (retain 50%, weight 0.5×)", "VIP (retain 0%, weight 1.0×)"];
 
-  console.log(`  Entering game — Tier ${tier}: ${tierLabels[tier]}...`);
-  const enterTx = await mmc.write.enterGame(
-    [depositRaw, tier, 0n],
-    { account: player.account }
-  );
-  await publicClient.waitForTransactionReceipt({ hash: enterTx });
-  console.log(`  ✓ enterGame confirmed: ${enterTx}`);
+    console.log(`  Approving ${fmt(depositRaw)} USDC for MoneyMoneyCome...`);
+    const approveTx = await usdc.write.approve(
+      [addrs.mmc, depositRaw],
+      { account: player.account }
+    );
+    await publicClient.waitForTransactionReceipt({ hash: approveTx });
+    console.log(`  ✓ Approve confirmed: ${approveTx}`);
 
-  const userInfo = await mmc.read.getUserInfo([playerAddr]);
-  const nftBal   = await ticketNFT.read.balanceOf([playerAddr]);
-  console.log();
-  console.log(`  Principal in contract: ${fmt(userInfo.principal)}`);
-  console.log(`  Weight (bps)         : ${userInfo.weightBps}`);
-  console.log(`  NFT tickets          : ${nftBal}`);
-  console.log();
+    console.log(`  Entering game — Tier ${tier}: ${tierLabels[tier]}...`);
+    const enterTx = await mmc.write.enterGame(
+      [depositRaw, tier, 0n],
+      { account: player.account }
+    );
+    await publicClient.waitForTransactionReceipt({ hash: enterTx });
+    console.log(`  ✓ enterGame confirmed: ${enterTx}`);
+
+    const userInfo = await mmc.read.getUserInfo([playerAddr]);
+    const nftBal   = await ticketNFT.read.balanceOf([playerAddr]);
+    console.log();
+    console.log(`  Principal in contract: ${fmt(userInfo.principal)}`);
+    console.log(`  Weight (bps)         : ${userInfo.weightBps}`);
+    console.log(`  NFT tickets          : ${nftBal}`);
+    console.log();
+
+    // ── 4b. 模拟 Aave 收益 ────────────────────────────────────────────────
+
+    header("STEP 4b — Simulate Aave Yield");
+
+    const yieldUsdc = BigInt(process.env.YIELD_USDC ?? "50");
+    const yieldRaw = yieldUsdc * ONE_USDC;
+
+    if (addrs.mockAToken) {
+      const aToken = await viem.getContractAt("MockAToken", addrs.mockAToken);
+      console.log(`  Simulating +${yieldUsdc} USDC yield to vault...`);
+      const yieldTx = await aToken.write.simulateYield(
+        [addrs.vault, yieldRaw],
+        { account: player.account }
+      );
+      await publicClient.waitForTransactionReceipt({ hash: yieldTx });
+      console.log(`  ✓ Yield simulation confirmed: ${yieldTx}`);
+    } else {
+      console.log("  ⚠ mockAToken not found in addresses.json — skipping yield simulation");
+      console.log("    (Auto-yield from yieldRateBps will still accrue over time)");
+    }
+    console.log();
+  } // end if (!roundExpired)
 
   // ── 5. 等待轮次到期 ──────────────────────────────────────────────────────
 
@@ -270,23 +313,29 @@ async function main() {
     await sleep(10_000);
     pollCount++;
 
-    const round = await mmc.read.getCurrentRoundInfo();
+    // Check the specific round we triggered the draw for
+    const settledRound = await mmc.read.rounds([theRoundId]);
+    const settledRoundState = Number(settledRound.state);
 
-    // getCurrentRoundInfo shows round #2 once #1 settles — check the settled round directly
-    const settledRound = await mmc.read.rounds([roundInfo.roundId]);
-    if (settledRound.state === SETTLED_STATE) {
+    // Check if current contract round has advanced past our round (means settlement happened)
+    const liveRoundId = await mmc.read.currentRound();
+
+    process.stdout.write(`  [${pollCount * 10}s] round #${theRoundId} state=${stateNames[settledRoundState] ?? settledRoundState}, currentRound=#${liveRoundId}`);
+
+    if (settledRoundState === SETTLED_STATE) {
+      console.log(` → SETTLED ✓`);
       settled = true;
       break;
     }
 
-    if (round.state === SETTLED_STATE) {
+    // If the contract has moved to a new round, our round must have settled
+    if (liveRoundId > theRoundId) {
+      console.log(` → new round started, settlement detected ✓`);
       settled = true;
       break;
     }
 
-    process.stdout.write(`  [${pollCount * 10}s] Still waiting for VRF...`);
-    const live = await mmc.read.getCurrentRoundInfo();
-    console.log(` state=${stateNames[live.state] ?? live.state}`);
+    console.log();
 
     if (pollCount >= 60) {
       // 10 minutes max
@@ -299,19 +348,19 @@ async function main() {
     }
   }
 
-  console.log(`  ✓ VRF fulfilled! Round #${roundInfo.roundId} settled.`);
+  console.log(`  ✓ VRF fulfilled! Round #${theRoundId} settled.`);
   console.log();
 
   // ── 8. 结果展示 ──────────────────────────────────────────────────────────
 
   header("STEP 8 — Results");
 
-  const settledRound = await mmc.read.rounds([roundInfo.roundId]);
+  const settledRound = await mmc.read.rounds([theRoundId]);
   const winner = settledRound.winner;
   const prize  = settledRound.prizePool;
   const isWinner = playerAddr.toLowerCase() === winner.toLowerCase();
 
-  console.log(`  Round #${roundInfo.roundId} Winner : ${shortAddr(winner)}${isWinner ? " ← YOU! 🏆" : ""}`);
+  console.log(`  Round #${theRoundId} Winner : ${shortAddr(winner)}${isWinner ? " ← YOU! 🏆" : ""}`);
   console.log(`  Prize Pool      : ${fmt(prize)}`);
   console.log();
 

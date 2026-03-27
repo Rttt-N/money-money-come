@@ -355,6 +355,18 @@ export const TICKET_NFT_ABI = [
   },
 ] as const;
 
+// ── YieldVault ABI (minimal, for reading totalAssets) ─────────────────────────
+
+export const VAULT_ABI = [
+  {
+    type: "function" as const,
+    name: "totalAssets",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view" as const,
+  },
+] as const;
+
 // ── Address map (updated by deploy script) ────────────────────────────────────
 
 type ChainAddresses = {

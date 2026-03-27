@@ -14,7 +14,7 @@ const STATE_LABELS: Record<number, { label: string; color: string }> = {
 };
 
 export default function HomePage() {
-  const { roundInfo, currentRound, participants, timeLeft } = useRoundInfo();
+  const { roundInfo, currentRound, participants, timeLeft, accruedYield } = useRoundInfo();
   const { userInfo } = useUserInfo();
 
   const state = roundInfo?.state ?? 0;
@@ -75,9 +75,16 @@ export default function HomePage() {
               Prize Pool
             </div>
             <div className="text-3xl font-bold text-white">
-              {roundInfo ? `$${formatUsdc(roundInfo.prizePool)}` : "—"}
+              {roundInfo
+                ? `$${formatUsdc(roundInfo.prizePool + (accruedYield ?? 0n))}`
+                : "—"}
             </div>
             <div className="mt-1 text-xs text-white/40">USDC</div>
+            {accruedYield !== undefined && accruedYield > 0n && (
+              <div className="mt-1 text-xs text-emerald-400">
+                +${formatUsdc(accruedYield)} accruing from Aave
+              </div>
+            )}
           </div>
 
           {/* Countdown */}

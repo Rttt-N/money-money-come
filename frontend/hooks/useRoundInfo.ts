@@ -1,7 +1,7 @@
 "use client";
 
 import { useReadContract, useChainId } from "wagmi";
-import { MMC_ABI, getAddresses } from "@/lib/contracts";
+import { MMC_ABI, VAULT_ABI, getAddresses } from "@/lib/contracts";
 import { useEffect, useState } from "react";
 
 export function useRoundInfo() {
@@ -39,6 +39,22 @@ export function useRoundInfo() {
     },
   });
 
+  // Read vault totalAssets for real-time yield display
+  const { data: vaultTotalAssets } = useReadContract({
+    address: addresses?.vault,
+    abi: VAULT_ABI,
+    functionName: "totalAssets",
+    query: { enabled: !!addresses?.vault, refetchInterval: 10_000 },
+  });
+
+  // Accrued yield = vault total assets - total principal deposited
+  const accruedYield =
+    vaultTotalAssets !== undefined && roundInfo
+      ? vaultTotalAssets > roundInfo.totalPrincipal
+        ? vaultTotalAssets - roundInfo.totalPrincipal
+        : 0n
+      : undefined;
+
   // Countdown
   const [timeLeft, setTimeLeft] = useState<number>(0);
 
@@ -55,7 +71,7 @@ export function useRoundInfo() {
     return () => clearInterval(id);
   }, [roundInfo]);
 
-  return { roundInfo, currentRound, participants, timeLeft, refetch };
+  return { roundInfo, currentRound, participants, timeLeft, accruedYield, refetch };
 }
 
 export function formatCountdown(ms: number): string {

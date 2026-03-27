@@ -1,0 +1,316 @@
+Sepolia 测试网部署指南 — MoneyMoneyCome（混合模式）
+====================================================
+部署方案：真实 Chainlink VRF + MockAave + MockUSDC
+所有资产（ETH、LINK）为测试代币；USDC 由 MockUSDC 合约自由 mint。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第一部分：准备工作（浏览器操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 1 — 准备测试钱包
+  - 打开 MetaMask，创建一个专用测试账户（不要用存有真实资产的钱包）
+  - 切换网络到 Sepolia Testnet
+  - 导出该账户私钥：账户右上角 ⋮ → Account Details → Show Private Key
+
+步骤 2 — 领取 Sepolia ETH 和 LINK（支付 gas 和 VRF 费用）
+  网址：https://faucets.chain.link/sepolia
+  操作：连接 MetaMask → 勾选 ETH 和 LINK → 点击 Send request
+  到账：约 1-2 分钟
+
+步骤 3 — 创建 VRF 订阅（如尚未创建）
+  本项目订阅 ID 已配置：
+  91373361934762118486803500197213397320200898647577952457435352255487252099163
+
+  如需新建：
+    网址：https://vrf.chain.link/sepolia
+    操作：Connect Wallet → Create Subscription → 确认交易 → 记录 Subscription ID
+    充值：Fund subscription → 充入至少 2 LINK
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第二部分：配置文件（已完成，确认即可）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+.env 文件位置：money-money-come/.env
+
+  SEPOLIA_RPC_URL     = https://sepolia.infura.io/v3/10cf6e9992e0469c8c2ad7ff21e88f40
+  SEPOLIA_PRIVATE_KEY = 0x你的测试钱包私钥
+  VRF_SUBSCRIPTION_ID = 91373361934762118486803500197213397320200898647577952457435352255487252099163
+
+注意：私钥请妥善保管，不要提交到 Git。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第三部分：部署合约（终端操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 4 — 进入项目目录
+  cd C:\Users\admin\Desktop\FT5004\money-money-come
+
+步骤 5 — 部署所有合约到 Sepolia
+  npx hardhat run scripts/deploy.ts --network sepolia
+
+  预期输出（示例）：
+    [Mocks] Deploying MockUSDC + MockAavePool...
+      MockUSDC           : 0xAAAA...    ← 记录此地址（步骤 7 用）
+      MockAavePool       : 0xBBBB...
+      MockAToken         : 0xCCCC...
+      MockAToken yieldRate: 200 bps/min (2%/min) ✓
+    [Sepolia] Using real Chainlink VRF...
+      VRF Coordinator    : 0x9DdfaCa8...
+      VRF Subscription   : 10957386...
+    [Core] Deploying protocol contracts...
+      YieldVault         : 0xDDDD...
+      SquadRegistry      : 0xEEEE...
+      TicketNFT          : 0xFFFF...
+      MoneyMoneyCome     : 0x1111...   ← 复制此地址，步骤 6 使用
+
+  部署完成后，合约地址自动写入：
+    frontend/lib/addresses.json（chainId: 11155111）
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第四部分：VRF Consumer 配置（浏览器操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 6 — 添加 MoneyMoneyCome 为 VRF Consumer
+  网址：https://vrf.chain.link/sepolia
+  操作：
+    1. 找到你的订阅
+    2. 点击 Add Consumer
+    3. 粘贴步骤 5 输出的 MoneyMoneyCome 地址
+    4. 确认交易
+
+  ⚠ 此步骤必须在运行 demo 前完成，否则 VRF 请求无法回调。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第五部分：Mint 测试 USDC 并添加到 MetaMask
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 7 — Mint MockUSDC 到自己的钱包
+  npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  默认 mint 100,000 USDC 到部署者账户。
+  自定义金额和目标：
+    MINT_TO=0x你的地址 MINT_AMOUNT=5000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  PowerShell 写法：
+    $env:MINT_TO="0x你的地址"; $env:MINT_AMOUNT="5000"
+    npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+步骤 8 — 在 MetaMask 中显示 MockUSDC 余额
+  1. 打开 MetaMask → 确保在 Sepolia 网络
+  2. 点击 "Assets" 标签页底部的 "Import tokens"
+  3. Token contract address: 粘贴步骤 5 输出的 MockUSDC 地址（0xAAAA...）
+  4. Token symbol: 自动填充为 "USDC"
+  5. Token decimal: 自动填充为 "6"
+  6. 点击 "Add Custom Token" → "Import Tokens"
+
+  现在 MetaMask 中可以看到你的 MockUSDC 余额了。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第六部分：测试运行（终端操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 9 — 运行演示脚本（全流程：存入 → 等待开奖 → 显示结果）
+  npx hardhat run scripts/demo.ts --network sepolia
+
+  可选参数：
+    DEPOSIT_USDC=200 TIER=2 YIELD_USDC=100 npx hardhat run scripts/demo.ts --network sepolia
+
+  演示流程说明：
+    1. 读取已部署合约地址
+    2. 检查 USDC 余额，不足时自动 Mint
+    3. Approve + enterGame（链上交易，需约 15-30 秒确认）
+    4. 模拟 Aave 收益（+50 USDC，可通过 YIELD_USDC 自定义）
+    5. 等待轮次到期（5 分钟）
+    6. 调用 performUpkeep，发送 VRF 请求
+    7. 每 10 秒轮询，等待 Chainlink VRF 回调（约 1-3 分钟）
+    8. 显示获奖者和奖金
+
+  注意：自动生息已启用（2%/分钟），即使不手动 simulateYield，
+  5 分钟内也会自动累积约 10% 的利息到奖池。
+
+步骤 10 — 手动模拟额外收益（可选）
+  npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+  自定义金额：
+    YIELD_AMOUNT=100 npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第七部分：启动前端
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 11 — 启动前端
+  cd frontend
+  npm install    （首次运行）
+  npm run dev
+
+  浏览器访问：http://localhost:3000
+  MetaMask 切换到 Sepolia 网络，连接测试钱包即可使用。
+
+  前端特性：
+  - 首页 Prize Pool 卡片显示实时累积利息（每 10 秒更新）
+  - Dashboard 显示 Accrued Interest 指标
+  - 所有金额显示为 USDC（MockUSDC 的 symbol 即为 USDC）
+
+步骤 12 — 多人测试（队友）
+  队友只需：
+    1. MetaMask 切换到 Sepolia
+    2. 自行从水龙头领取 Sepolia ETH（用于 gas）
+    3. 告知部署者自己的钱包地址，由部署者 mint USDC：
+       MINT_TO=0x队友地址 MINT_AMOUNT=1000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+    4. 队友在 MetaMask 中 Import Token（MockUSDC 地址）
+    5. 获取 frontend/lib/addresses.json（含 Sepolia 合约地址）
+    6. 本地运行 npm run dev，连接自己的 MetaMask
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+快速命令汇总
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # 部署合约（MockUSDC + MockAave + 真实 VRF）
+  npx hardhat run scripts/deploy.ts --network sepolia
+
+  # Mint 测试 USDC
+  npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  # 给队友 mint USDC
+  MINT_TO=0x地址 MINT_AMOUNT=1000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  # 手动模拟额外收益
+  YIELD_AMOUNT=50 npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+  # 运行完整演示
+  npx hardhat run scripts/demo.ts --network sepolia
+
+  # 启动前端
+  cd frontend && npm run dev
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+常见问题
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Q: 部署失败，提示 insufficient funds
+A: 钱包 Sepolia ETH 不足，去 https://faucets.chain.link/sepolia 领取。
+
+Q: demo 等待 VRF 超过 10 分钟
+A: 检查 vrf.chain.link/sepolia：
+   - MoneyMoneyCome 地址是否已添加为 Consumer？
+   - 订阅中是否有足够 LINK（至少 0.5 LINK）？
+
+Q: 前端显示"No deployment found"
+A: 确认 frontend/lib/addresses.json 中有 "11155111" 的条目。
+   重新运行部署脚本即可自动更新。
+
+Q: 如何给其他测试账户 mint USDC？
+A: 使用 MINT_TO=0x目标地址 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+Q: 开奖后奖金为 0
+A: 确保在开奖前有利息累积。方式有两种：
+   1. 自动利息：部署时已设置 2%/分钟利率，5 分钟自动累积 ~10%
+   2. 手动注入：YIELD_AMOUNT=50 npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+Q: MetaMask 中看不到 USDC 余额
+A: 需要手动导入代币。点击 Import tokens → 粘贴 MockUSDC 合约地址。
+
+Q: 需要重新部署（修改合约后）
+A: 直接重新运行 deploy.ts，addresses.json 自动更新。
+   重新部署后需要再次添加 VRF Consumer。
+
+Q: 本项目和真实 Aave 的关系是什么？
+A: 本项目使用 MockAave（带自动生息功能）模拟 Aave V3 的存取接口。
+   合约架构（YieldVault → AavePool → aToken）与真实 Aave 完全一致，
+   只需替换地址即可切换到真实 Aave。Chainlink VRF 是真实的。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+完整部署步骤速查（按顺序执行）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第一阶段：准备工作（浏览器，只需做一次）                       │
+  └─────────────────────────────────────────────────────────────┘
+
+  1. MetaMask 创建测试账户，切换到 Sepolia 网络，导出私钥
+
+  2. 领取测试 ETH + LINK
+     → https://faucets.chain.link/sepolia
+     → 勾选 ETH 和 LINK → Send request → 等 1-2 分钟到账
+
+  3. 创建 VRF 订阅（已有可跳过）
+     → https://vrf.chain.link/sepolia
+     → Create Subscription → 充入至少 2 LINK → 记录 Subscription ID
+
+  4. 配置 .env 文件（项目根目录 money-money-come/.env）
+     SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/10cf6e9992e0469c8c2ad7ff21e88f40
+     SEPOLIA_PRIVATE_KEY=0x你的私钥
+     VRF_SUBSCRIPTION_ID=你的订阅ID
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第二阶段：部署合约（终端）                                    │
+  └─────────────────────────────────────────────────────────────┘
+
+  5. 进入项目目录
+     cd C:\Users\admin\Desktop\FT5004\money-money-come
+
+  6. 部署所有合约到 Sepolia
+     npx hardhat run scripts/deploy.ts --network sepolia
+     → 记录输出中的 MockUSDC 地址和 MoneyMoneyCome 地址
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第三阶段：部署后配置（浏览器 + 终端）                         │
+  └─────────────────────────────────────────────────────────────┘
+
+  7. 添加 VRF Consumer（浏览器）
+     → https://vrf.chain.link/sepolia → 找到订阅 → Add Consumer
+     → 粘贴第 6 步输出的 MoneyMoneyCome 地址 → 确认交易
+
+  8. Mint 测试 USDC（终端）
+     npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  9. MetaMask 导入 MockUSDC 代币（浏览器）
+     → MetaMask → Assets → Import tokens
+     → 粘贴第 6 步输出的 MockUSDC 地址 → Add Custom Token → Import
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第四阶段：启动前端（终端）                                    │
+  └─────────────────────────────────────────────────────────────┘
+
+  10. 安装依赖并启动
+      cd frontend
+      npm install
+      npm run dev
+
+  11. 打开浏览器
+      → http://localhost:3000
+      → MetaMask 切换到 Sepolia → 连接钱包
+      → 即可在前端存入 USDC、查看实时利息、等待开奖
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第五阶段：运行演示（可选，纯命令行演示）                       │
+  └─────────────────────────────────────────────────────────────┘
+
+  12. 一键演示（自动存入 → 模拟收益 → 等 VRF 开奖 → 显示结果）
+      npx hardhat run scripts/demo.ts --network sepolia
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  队友加入（给其他人 mint USDC）                                │
+  └─────────────────────────────────────────────────────────────┘
+
+  13. 队友领取 Sepolia ETH（自行操作）
+      → https://faucets.chain.link/sepolia
+
+  14. 部署者给队友 mint USDC
+      MINT_TO=0x队友地址 MINT_AMOUNT=1000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  15. 队友在 MetaMask 中 Import Token（MockUSDC 地址）
+
+  16. 队友获取 frontend/lib/addresses.json，本地 npm run dev 即可
+
+==========================================

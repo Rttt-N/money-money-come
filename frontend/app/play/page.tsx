@@ -177,7 +177,7 @@ export default function PlayPage() {
         </div>
       )}
 
-      {!isOpen && !alreadyIn && (
+      {roundInfo !== undefined && !isOpen && !alreadyIn && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <div>

@@ -19,7 +19,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.className} bg-[#080808] text-white antialiased`}>
+      <body className={`${inter.className} bg-[#080808] text-white antialiased`} suppressHydrationWarning>
         <Providers>
           <div className="min-h-screen flex flex-col">
             <Navbar />

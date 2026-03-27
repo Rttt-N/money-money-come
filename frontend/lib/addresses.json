@@ -6,5 +6,13 @@
     "squadRegistry": "0xdc64a140aa3e981100a9beca4e685f962f0cf6c9",
     "ticketNFT": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
     "mockVRF": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0"
+  },
+  "11155111": {
+    "mmc": "0xb4d83754e20d6ab9389910eb73b5ee7de6be8050",
+    "usdc": "0x07800524cb670f5cf128da7ae17963c35b2a6b46",
+    "vault": "0xdd8555e13f05dff3dc7b7f845655b42697699222",
+    "squadRegistry": "0xd0d776c5c3e226aa153d8bb6e726da2fbd3f00b3",
+    "ticketNFT": "0x62f523b930acd6b5ba8d5d1c3a7e963dd1134f5c",
+    "mockAToken": "0x12Dccf6733b3D77794541513112B51Af2251F70b"
   }
 }

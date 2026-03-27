@@ -93,7 +93,7 @@ contract MoneyMoneyCome is
     bytes32 public immutable keyHash;
     uint256 public immutable subscriptionId;
     uint16  public constant REQUEST_CONFIRMATIONS = 3;
-    uint32  public          callbackGasLimit       = 2_000_000; // NEW-CH-2/CL-4: mutable, increased default
+    uint32  public          callbackGasLimit       = 500_000; // fulfillRandomWords includes NFT mint + rollover
     uint32  public constant NUM_WORDS             = 1;
     uint256 public constant MAX_PARTICIPANTS      = 100; // NEW-CL-2: cap to prevent gas DoS
 
@@ -286,10 +286,15 @@ contract MoneyMoneyCome is
 
     // ── Admin setters ─────────────────────────────────────────────────────────
 
-    /// @notice Update round duration. Takes effect from the next round. M-2 fix.
+    /// @notice Update round duration. Also updates current round endTime if still OPEN.
     function setRoundDuration(uint256 newDuration) external onlyOwner {
         require(newDuration >= 1, "MMC: duration too short"); // min 1s for testing; use >= 1 day in production
         roundDuration = newDuration;
+        // If current round is OPEN, update its endTime so the change takes effect immediately
+        RoundInfo storage r = rounds[currentRound];
+        if (r.state == RoundState.OPEN) {
+            r.endTime = r.startTime + newDuration;
+        }
     }
 
     /// @notice Update VRF callback gas limit. NEW-CH-2/CL-4 fix.
@@ -333,13 +338,20 @@ contract MoneyMoneyCome is
         r.state = RoundState.LOCKED;
         _harvestYield();
 
+        // VRF V2.5 extraArgs: VRFV2PlusClient.EXTRA_ARGS_V1_TAG = keccak256("VRF ExtraArgsV1") = 0x92fd1338
+        // nativePayment=false → pay with LINK
+        bytes memory vrfExtraArgs = abi.encodePacked(
+            bytes4(keccak256("VRF ExtraArgsV1")),
+            abi.encode(false)
+        );
+
         IVRFCoordinatorV2Plus.RandomWordsRequest memory req = IVRFCoordinatorV2Plus.RandomWordsRequest({
             keyHash:             keyHash,
             subId:               subscriptionId,
             requestConfirmations: REQUEST_CONFIRMATIONS,
             callbackGasLimit:    callbackGasLimit,
             numWords:            NUM_WORDS,
-            extraArgs:           ""
+            extraArgs:           vrfExtraArgs
         });
 
         uint256 requestId = vrfCoord.requestRandomWords(req);

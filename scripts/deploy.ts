@@ -1,5 +1,6 @@
 /**
- * 统一部署脚本：自动识别网络，本地使用 Mock，Sepolia 使用真实合约。
+ * 统一部署脚本：自动识别网络，本地和 Sepolia 均使用 MockUSDC + MockAave。
+ * Sepolia 使用真实 Chainlink VRF，本地使用 MockVRFCoordinator。
  *
  * 本地:
  *   npx hardhat run scripts/deploy.ts --network hardhatMainnet
@@ -15,30 +16,18 @@
  *   1. 前往 https://vrf.chain.link/sepolia 创建 VRF V2.5 订阅
  *   2. 用 LINK 充值订阅 (至少 2 LINK)
  *   3. 部署合约后，将 MoneyMoneyCome 地址添加为 Consumer
- *   4. 前往 https://faucets.chain.link/sepolia-aave 获取测试 USDC
  */
 
 import { network } from "hardhat";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { viem } = await network.connect();
 
-// ── Sepolia 真实合约地址 ──────────────────────────────────────────────────────
-// 来源: https://docs.aave.com/developers/deployed-contracts/v3-testnet-addresses
-//       https://docs.chain.link/vrf/v2-5/supported-networks#sepolia-testnet
-const SEPOLIA = {
-  // Aave V3 Pool (Sepolia)
-  aavePool:   "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951" as `0x${string}`,
-  // Aave 测试 USDC (从 https://faucets.chain.link/sepolia-aave 获取)
-  usdc:       "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8" as `0x${string}`,
-  // aUSDC token on Aave V3 Sepolia
-  aToken:     "0x16dA4541aD1807f4443d92D26044C1147406EB80" as `0x${string}`,
-  // Chainlink VRF V2.5 Coordinator (Sepolia)
+// ── Sepolia 真实 VRF 地址 ──────────────────────────────────────────────────────
+// 来源: https://docs.chain.link/vrf/v2-5/supported-networks#sepolia-testnet
+const SEPOLIA_VRF = {
   vrfCoord:   "0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B" as `0x${string}`,
-  // VRF Key Hash (750 gwei lane, Sepolia)
   vrfKeyHash: "0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae" as `0x${string}`,
 } as const;
 
@@ -60,39 +49,44 @@ async function main() {
     throw new Error(`Unsupported chainId: ${chainId}. Use hardhatMainnet (31337) or sepolia (11155111).`);
   }
 
-  // ── Step 1: 底层依赖 (USDC / Aave / VRF) ────────────────────────────────────
+  // ── Step 1: 部署 MockUSDC + MockAave（所有网络共用）──────────────────────────
 
-  let usdcAddress:    `0x${string}`;
-  let aavePoolAddr:   `0x${string}`;
-  let aTokenAddress:  `0x${string}`;
-  let vrfCoordAddr:   `0x${string}`;
-  let vrfKeyHash:     `0x${string}`;
-  let vrfSubId:       bigint;
+  console.log("\n[Mocks] Deploying MockUSDC + MockAavePool...");
+
+  const mockUSDC = await viem.deployContract("MockUSDC");
+  console.log("  MockUSDC           :", mockUSDC.address);
+
+  const mockAavePool = await viem.deployContract("MockAavePool", [mockUSDC.address]);
+  console.log("  MockAavePool       :", mockAavePool.address);
+
+  const aTokenAddress = await mockAavePool.read.aToken();
+  console.log("  MockAToken         :", aTokenAddress);
+
+  const usdcAddress  = mockUSDC.address;
+  const aavePoolAddr = mockAavePool.address;
+
+  // 设置 demo 利率: 200 bps/min = 2%/min，5 分钟约 10% yield
+  const aToken = await viem.getContractAt("MockAToken", aTokenAddress);
+  await aToken.write.setYieldRate([200n]);
+  console.log("  MockAToken yieldRate: 200 bps/min (2%/min) ✓");
+
+  // ── Step 2: VRF（本地 vs Sepolia）──────────────────────────────────────────
+
+  let vrfCoordAddr: `0x${string}`;
+  let vrfKeyHash:   `0x${string}`;
+  let vrfSubId:     bigint;
 
   if (isLocal) {
-    console.log("\n[Local] Deploying mock contracts...");
-
-    const mockUSDC = await viem.deployContract("MockUSDC");
-    console.log("  MockUSDC           :", mockUSDC.address);
-
-    const mockAavePool = await viem.deployContract("MockAavePool", [mockUSDC.address]);
-    console.log("  MockAavePool       :", mockAavePool.address);
-
-    aTokenAddress = await mockAavePool.read.aToken();
-    console.log("  MockAToken         :", aTokenAddress);
-
+    console.log("\n[Local] Deploying MockVRFCoordinator...");
     const mockVRF = await viem.deployContract("MockVRFCoordinator");
     console.log("  MockVRFCoordinator :", mockVRF.address);
 
-    usdcAddress  = mockUSDC.address;
-    aavePoolAddr = mockAavePool.address;
     vrfCoordAddr = mockVRF.address;
     vrfKeyHash   = "0x0000000000000000000000000000000000000000000000000000000000000000";
     vrfSubId     = 1n;
-
   } else {
-    // Sepolia — 使用真实合约
-    console.log("\n[Sepolia] Using real contract addresses...");
+    // Sepolia — 使用真实 Chainlink VRF
+    console.log("\n[Sepolia] Using real Chainlink VRF...");
 
     const subIdStr = process.env.VRF_SUBSCRIPTION_ID;
     if (!subIdStr) {
@@ -102,21 +96,15 @@ async function main() {
       );
     }
 
-    usdcAddress  = SEPOLIA.usdc;
-    aavePoolAddr = SEPOLIA.aavePool;
-    aTokenAddress = SEPOLIA.aToken;
-    vrfCoordAddr = SEPOLIA.vrfCoord;
-    vrfKeyHash   = SEPOLIA.vrfKeyHash;
+    vrfCoordAddr = SEPOLIA_VRF.vrfCoord;
+    vrfKeyHash   = SEPOLIA_VRF.vrfKeyHash;
     vrfSubId     = BigInt(subIdStr);
 
-    console.log("  USDC (Aave faucet) :", usdcAddress);
-    console.log("  Aave V3 Pool       :", aavePoolAddr);
-    console.log("  aUSDC              :", aTokenAddress);
     console.log("  VRF Coordinator    :", vrfCoordAddr);
     console.log("  VRF Subscription   :", vrfSubId.toString());
   }
 
-  // ── Step 2: 部署核心合约 ─────────────────────────────────────────────────────
+  // ── Step 3: 部署核心合约 ─────────────────────────────────────────────────────
 
   console.log("\n[Core] Deploying protocol contracts...");
 
@@ -150,21 +138,19 @@ async function main() {
   ]);
   console.log("  MoneyMoneyCome     :", mmc.address);
 
-  // ── Step 3: 转移所有权 ───────────────────────────────────────────────────────
+  // ── Step 4: 转移所有权 + 设置轮次 ──────────────────────────────────────────
 
   await vault.write.transferOwnership([mmc.address]);
   await ticketNFT.write.transferOwnership([mmc.address]);
   console.log("\n[Setup] Ownership transferred to MoneyMoneyCome ✓");
 
-  if (isLocal) {
-    await mmc.write.setRoundDuration([300n]); // 5 minutes for local testing
-    console.log("[Setup] Round duration set to 300s (5 min) for local testing ✓");
-  }
+  await mmc.write.setRoundDuration([300n]); // 5 minutes for testing
+  console.log("[Setup] Round duration set to 300s (5 min) ✓");
 
-  // ── Step 4: 写入 addresses.json ──────────────────────────────────────────────
+  // ── Step 5: 写入 addresses.json ──────────────────────────────────────────────
 
   const chainKey = chainId.toString();
-  const addressesPath = path.join(__dirname, "../frontend/lib/addresses.json");
+  const addressesPath = path.join(process.cwd(), "frontend/lib/addresses.json");
 
   let existing: Record<string, unknown> = {};
   if (fs.existsSync(addressesPath)) {
@@ -177,11 +163,14 @@ async function main() {
     vault:         vault.address,
     squadRegistry: squadRegistry.address,
     ticketNFT:     ticketNFT.address,
+    mockAToken:    aTokenAddress,
     ...(isLocal ? { mockVRF: vrfCoordAddr } : {}),
   };
 
   fs.writeFileSync(addressesPath, JSON.stringify(existing, null, 2));
   console.log(`[Done] Addresses written to frontend/lib/addresses.json (chainId: ${chainKey})`);
+
+  // ── 部署后提示 ──────────────────────────────────────────────────────────────
 
   if (isSepolia) {
     console.log("\n" + "━".repeat(60));
@@ -189,9 +178,12 @@ async function main() {
     console.log("  1. Add MoneyMoneyCome as VRF consumer:");
     console.log(`       https://vrf.chain.link/sepolia → subscription ${vrfSubId}`);
     console.log(`       Consumer address: ${mmc.address}`);
-    console.log("  2. Get test USDC from Aave faucet:");
-    console.log("       https://faucets.chain.link/sepolia-aave");
-    console.log("  3. Approve + call enterGame() via the frontend.");
+    console.log("  2. Mint test USDC:");
+    console.log("       npx hardhat run scripts/mint-usdc.ts --network sepolia");
+    console.log("  3. (Optional) Add MockUSDC to MetaMask:");
+    console.log(`       Import Token → ${usdcAddress}`);
+    console.log("  4. Run demo:");
+    console.log("       npx hardhat run scripts/demo.ts --network sepolia");
     console.log("━".repeat(60));
   }
 }

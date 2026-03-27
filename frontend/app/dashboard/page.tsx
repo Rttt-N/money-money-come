@@ -34,7 +34,7 @@ const TIER_STYLES: Record<number, { gradient: string; ring: string; label: strin
 export default function DashboardPage() {
   const { address } = useAccount();
   const { userInfo, winProb, usdcBalance, nftBalance, addresses, refetch } = useUserInfo();
-  const { roundInfo, currentRound } = useRoundInfo();
+  const { roundInfo, currentRound, accruedYield } = useRoundInfo();
 
   const [withdrawStep, setWithdrawStep] = useState<"idle" | "confirm" | "pending" | "done">("idle");
   const [partialAmount, setPartialAmount] = useState("");
@@ -317,10 +317,16 @@ export default function DashboardPage() {
               <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-white/40">
                 Current Round Info
               </h3>
-              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 text-sm">
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4 text-sm">
                 <div>
                   <div className="text-white/40">Prize Pool</div>
                   <div className="font-bold text-white">${formatUsdc(roundInfo.prizePool)}</div>
+                </div>
+                <div>
+                  <div className="text-white/40">Accrued Interest</div>
+                  <div className="font-bold text-emerald-400">
+                    +${formatUsdc(accruedYield ?? 0n)}
+                  </div>
                 </div>
                 <div>
                   <div className="text-white/40">Total Deposited</div>

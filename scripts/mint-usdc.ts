@@ -1,15 +1,18 @@
 /**
- * 给本地账户 mint 测试 USDC，便于前端测试。
- * - 默认 mint 给本地第一个账户（保持原有逻辑）
- * - 可选通过环境变量 MINT_TO 指定目标地址
- * - 可选通过环境变量 MINT_AMOUNT 指定 USDC 数量（单位: USDC，默认 100000）
+ * 给账户 mint 测试 MockUSDC，支持本地和 Sepolia。
  *
  * 用法:
- *   npx hardhat run scripts/mint-usdc.ts --network localhost
- *   # PowerShell
- *   $env:MINT_TO="0xabc..."; $env:MINT_AMOUNT="5000"; npx hardhat run scripts/mint-usdc.ts --network localhost
- *   # bash/zsh
- *   MINT_TO=0xabc... MINT_AMOUNT=5000 npx hardhat run scripts/mint-usdc.ts --network localhost
+ *   npx hardhat run scripts/mint-usdc.ts --network hardhatMainnet
+ *   npx hardhat run scripts/mint-usdc.ts --network sepolia
+ *
+ * 可选环境变量:
+ *   MINT_TO=0xabc...        # 目标地址（默认：部署者账户）
+ *   MINT_AMOUNT=5000        # USDC 数量（默认 100000）
+ *
+ * PowerShell:
+ *   $env:MINT_TO="0xabc..."; $env:MINT_AMOUNT="5000"; npx hardhat run scripts/mint-usdc.ts --network sepolia
+ * bash/zsh:
+ *   MINT_TO=0xabc... MINT_AMOUNT=5000 npx hardhat run scripts/mint-usdc.ts --network sepolia
  */
 import { network } from "hardhat";
 import fs from "fs";
@@ -27,16 +30,19 @@ function readArg(flag: string): string | undefined {
 }
 
 async function main() {
+  const publicClient = await viem.getPublicClient();
+  const chainId = await publicClient.getChainId();
+
   const addressesPath = path.join(__dirname, "../frontend/lib/addresses.json");
   if (!fs.existsSync(addressesPath)) {
-    console.error("先运行: npx hardhat run scripts/deploy.ts --network localhost");
+    console.error("请先部署合约: npx hardhat run scripts/deploy.ts --network <network>");
     process.exit(1);
   }
 
   const addresses = JSON.parse(fs.readFileSync(addressesPath, "utf-8"));
-  const usdcAddress = addresses["31337"]?.usdc;
+  const usdcAddress = addresses[chainId.toString()]?.usdc;
   if (!usdcAddress || usdcAddress === "0x0000000000000000000000000000000000000000") {
-    console.error("addresses.json 中尚无 USDC 地址，请先部署合约。");
+    console.error(`addresses.json 中尚无 chainId ${chainId} 的 USDC 地址，请先部署合约。`);
     process.exit(1);
   }
 
@@ -60,7 +66,7 @@ async function main() {
   const amount = usdcAmount * 10n ** 6n; // USDC has 6 decimals
   await usdc.write.mint([target, amount]);
 
-  console.log("Minted", usdcAmount.toString(), "USDC to", target);
+  console.log(`Minted ${usdcAmount.toString()} USDC to ${target} (chainId: ${chainId})`);
 }
 
 main().catch((err) => {
