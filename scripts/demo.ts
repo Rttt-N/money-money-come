@@ -313,20 +313,19 @@ async function main() {
     await sleep(10_000);
     pollCount++;
 
-    // Check the specific round we triggered the draw for
-    const settledRound = await mmc.read.rounds([theRoundId]);
-    const settledRoundState = Number(settledRound.state);
-
     // Check if current contract round has advanced past our round (means settlement happened)
     const liveRoundId = await mmc.read.currentRound();
 
-    process.stdout.write(`  [${pollCount * 10}s] round #${theRoundId} state=${stateNames[settledRoundState] ?? settledRoundState}, currentRound=#${liveRoundId}`);
-
-    if (settledRoundState === SETTLED_STATE) {
-      console.log(` → SETTLED ✓`);
-      settled = true;
-      break;
+    // When still on the same round, read state via getCurrentRoundInfo (returns proper named struct)
+    let stateDisplay: string;
+    if (liveRoundId > theRoundId) {
+      stateDisplay = "SETTLED";
+    } else {
+      const liveInfo = await mmc.read.getCurrentRoundInfo();
+      stateDisplay = stateNames[Number(liveInfo.state)] ?? String(liveInfo.state);
     }
+
+    process.stdout.write(`  [${pollCount * 10}s] round #${theRoundId} state=${stateDisplay}, currentRound=#${liveRoundId}`);
 
     // If the contract has moved to a new round, our round must have settled
     if (liveRoundId > theRoundId) {
@@ -355,9 +354,30 @@ async function main() {
 
   header("STEP 8 — Results");
 
-  const settledRound = await mmc.read.rounds([theRoundId]);
-  const winner = settledRound.winner;
-  const prize  = settledRound.prizePool;
+  // Read winner/prize from DrawFulfilled event (avoids ABI tuple vs flat-output mismatch)
+  const FULFILL_ABI = [{
+    type: "event",
+    name: "DrawFulfilled",
+    inputs: [
+      { indexed: true,  name: "roundId", type: "uint256" },
+      { indexed: true,  name: "winner",  type: "address" },
+      { indexed: false, name: "prize",   type: "uint256" },
+    ],
+  }] as const;
+
+  const fulfillEvents = await publicClient.getContractEvents({
+    address: addrs.mmc,
+    abi: FULFILL_ABI,
+    eventName: "DrawFulfilled",
+    args: { roundId: theRoundId },
+    fromBlock: upkeepReceipt.blockNumber,
+    toBlock: "latest",
+    strict: true,
+  });
+
+  const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+  const winner = fulfillEvents[0]?.args.winner ?? ZERO_ADDR;
+  const prize  = fulfillEvents[0]?.args.prize  ?? 0n;
   const isWinner = playerAddr.toLowerCase() === winner.toLowerCase();
 
   console.log(`  Round #${theRoundId} Winner : ${shortAddr(winner)}${isWinner ? " ← YOU! 🏆" : ""}`);
@@ -378,9 +398,9 @@ async function main() {
   console.log(`     Loyalty rounds       : ${finalInfo.loyaltyRounds}`);
   console.log();
 
-  const newRound = await mmc.read.getCurrentRoundInfo();
+  const newRoundId = await mmc.read.currentRound();
   sep("━");
-  console.log(`  Round #${newRound.roundId} started automatically (state: OPEN)`);
+  console.log(`  Round #${newRoundId} started automatically (state: OPEN)`);
   console.log(`  Your principal has been rolled over into the new round ✓`);
   sep("━");
   console.log();

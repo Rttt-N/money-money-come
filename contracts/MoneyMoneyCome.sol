@@ -93,7 +93,7 @@ contract MoneyMoneyCome is
     bytes32 public immutable keyHash;
     uint256 public immutable subscriptionId;
     uint16  public constant REQUEST_CONFIRMATIONS = 3;
-    uint32  public          callbackGasLimit       = 500_000; // fulfillRandomWords includes NFT mint + rollover
+    uint32  public          callbackGasLimit       = 1_000_000; // fulfillRandomWords includes NFT mint + rollover per participant
     uint32  public constant NUM_WORDS             = 1;
     uint256 public constant MAX_PARTICIPANTS      = 100; // NEW-CL-2: cap to prevent gas DoS
 
@@ -117,6 +117,11 @@ contract MoneyMoneyCome is
     mapping(uint256 => address[])       private _roundParticipants;
     mapping(uint256 => uint256)         private _vrfRequestToRound;
     mapping(address => uint256)         public  pendingWithdrawals;  // H-1: pull payments
+
+    /// @notice Chainlink Automation forwarder address. Set after registering upkeep.
+    /// @dev When address(0), anyone may call performUpkeep (manual/demo mode).
+    ///      Once set, only the forwarder or owner can trigger draws.
+    address public automationForwarder;
 
     // ── Events ───────────────────────────────────────────────────────────────
 
@@ -303,6 +308,28 @@ contract MoneyMoneyCome is
         callbackGasLimit = newLimit;
     }
 
+    /// @notice Set the Chainlink Automation forwarder address for this upkeep.
+    /// @dev Get this from: AutomationRegistry.getForwarder(upkeepId) after registering.
+    ///      Set to address(0) to allow anyone to call performUpkeep (demo/manual mode).
+    function setAutomationForwarder(address forwarder) external onlyOwner {
+        automationForwarder = forwarder;
+    }
+
+    /// @notice Emergency: force-settle a stuck DRAWING/LOCKED round with no winner and start a new round.
+    /// @dev Use only when Chainlink VRF fulfillment has permanently failed (gas too low, subscription issues).
+    ///      Principal is safe — users roll over automatically to the new round.
+    function emergencyReset() external onlyOwner {
+        RoundInfo storage r = rounds[currentRound];
+        require(
+            r.state == RoundState.DRAWING || r.state == RoundState.LOCKED,
+            "MMC: round not stuck"
+        );
+        r.state  = RoundState.SETTLED;
+        r.winner = address(0);
+        emit DrawFulfilled(currentRound, address(0), 0);
+        _startNewRound();
+    }
+
     // ── claimPrize (pull payment for winners) ────────────────────────────────
 
     /// @notice Claim any pending prize credited to your address.
@@ -330,6 +357,14 @@ contract MoneyMoneyCome is
     }
 
     function performUpkeep(bytes calldata) external override {
+        // Allow: Chainlink forwarder, owner, or anyone when forwarder not yet configured
+        require(
+            automationForwarder == address(0)
+                || msg.sender == automationForwarder
+                || msg.sender == owner(),
+            "MMC: not authorized"
+        );
+
         RoundInfo storage r = rounds[currentRound];
         require(block.timestamp >= r.endTime,                      "MMC: round not ended");
         require(r.state == RoundState.OPEN,                        "MMC: wrong state");

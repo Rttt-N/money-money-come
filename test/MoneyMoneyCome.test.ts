@@ -6,9 +6,9 @@ import { network } from "hardhat";
 const ONE_USDC = 10n ** 6n; // 1 USDC = 1_000_000 (6 decimals)
 const BYTES32_ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
-// Round 1 endTime uses default 7 days from constructor; subsequent rounds use setRoundDuration(2)
-const ROUND1_WAIT = 7 * 86400 + 1; // 7 days + 1 second to pass round 1 endTime
-const ROUND_WAIT = 11; // for rounds after round 1 (duration = 10 seconds)
+// Round 1 endTime = startTime + 120s (setRoundDuration updates current round); subsequent rounds use same 120s duration
+const ROUND1_WAIT = 121; // 120s + 1 second to pass round 1 endTime
+const ROUND_WAIT = 121; // for rounds after round 1 (duration = 120 seconds)
 
 describe("MoneyMoneyCome — 46 Test Cases", async function () {
   const { viem, provider } = await network.connect();
@@ -49,8 +49,8 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
     await vault.write.transferOwnership([mmc.address]);
     await ticketNFT.write.transferOwnership([mmc.address]);
 
-    // Set short round duration for testing (default is 7 days)
-    await mmc.write.setRoundDuration([10n]);
+    // Set short round duration for testing (default is 7 days); also updates current round's endTime
+    await mmc.write.setRoundDuration([120n]);
 
     return {
       mmc, vault, ticketNFT, squadRegistry,
@@ -318,7 +318,7 @@ describe("MoneyMoneyCome — 46 Test Cases", async function () {
       assert.equal(infoR2.loyaltyRounds, 1n);
       assert.equal(infoR2.weightBps, 105n * ONE_USDC);
       await simulateYield(ctx, 10n * ONE_USDC);
-      await increaseTime(ROUND_WAIT); // round 2 uses setRoundDuration(2)
+      await increaseTime(ROUND_WAIT); // round 2 uses same 120s duration
       await ctx.mmc.write.performUpkeep(["0x"]);
       await ctx.mockVRF.write.fulfillRequest([2n, 0n]);
       const infoR3 = await ctx.mmc.read.getUserInfo([ctx.user1.account.address]);
