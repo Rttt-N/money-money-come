@@ -182,8 +182,11 @@ async function main() {
     console.log("       npx hardhat run scripts/mint-usdc.ts --network sepolia");
     console.log("  3. (Optional) Add MockUSDC to MetaMask:");
     console.log(`       Import Token → ${usdcAddress}`);
-    console.log("  4. Run demo:");
+    console.log("  4. Run demo (includes Step 9: claimTicket + claimYield):");
     console.log("       npx hardhat run scripts/demo.ts --network sepolia");
+    console.log("  5. Pull-pattern reminder:");
+    console.log("       After each round, users must call claimTicket() to re-enroll.");
+    console.log("       Tier 1/2 users call claimYield(roundId) to receive retained yield.");
     console.log("━".repeat(60));
   }
 }

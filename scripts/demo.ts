@@ -305,7 +305,6 @@ async function main() {
   console.log(`  Polling round state every 10 seconds.`);
   console.log();
 
-  const SETTLED_STATE = 3;
   let settled = false;
   let pollCount = 0;
 
@@ -350,7 +349,7 @@ async function main() {
   console.log(`  ✓ VRF fulfilled! Round #${theRoundId} settled.`);
   console.log();
 
-  // ── 8. 结果展示 ──────────────────────────────────────────────────────────
+  // ── 8. 结果展示 ─────────────────────────────────────────────────────────
 
   header("STEP 8 — Results");
 
@@ -400,9 +399,54 @@ async function main() {
 
   const newRoundId = await mmc.read.currentRound();
   sep("━");
-  console.log(`  Round #${newRoundId} started automatically (state: OPEN)`);
-  console.log(`  Your principal has been rolled over into the new round ✓`);
+  console.log(`  Round #${newRoundId} is now OPEN`);
   sep("━");
+  console.log();
+
+  // ── 9. Pull-Pattern: claimTicket & claimYield ────────────────────────────
+
+  header("STEP 9 — Pull Pattern: claimTicket() & claimYield()");
+
+  console.log(`  In the new pull-pattern architecture:`);
+  console.log(`    • Rollover is NOT automatic — call claimTicket() to join the next round`);
+  console.log(`    • Retained yield is NOT pushed — call claimYield(roundId) to receive it`);
+  console.log();
+
+  // 9a. claimTicket — enroll principal in the new round
+  const needsRoll = await mmc.read.needsRollover([playerAddr]);
+  console.log(`  needsRollover()  → ${needsRoll}`);
+  if (needsRoll) {
+    console.log(`  Calling claimTicket() to enroll principal in round #${newRoundId}...`);
+    const claimTx = await mmc.write.claimTicket({ account: player.account });
+    await publicClient.waitForTransactionReceipt({ hash: claimTx });
+    console.log(`  ✓ claimTicket confirmed: ${claimTx}`);
+    const afterClaimInfo = await mmc.read.getUserInfo([playerAddr]);
+    const newNft = await ticketNFT.read.balanceOf([playerAddr]);
+    console.log(`  Enrolled in round  : #${afterClaimInfo.roundJoined}`);
+    console.log(`  Loyalty rounds     : ${afterClaimInfo.loyaltyRounds}`);
+    console.log(`  NFT tickets        : ${newNft}`);
+  } else {
+    console.log(`  Already enrolled or no principal — skipping claimTicket().`);
+  }
+  console.log();
+
+  // 9b. claimYield — retained yield for Tier 1 / Tier 2 users
+  const yieldPreview = await mmc.read.previewClaimYield([theRoundId, playerAddr]);
+  console.log(`  previewClaimYield(round #${theRoundId})  → ${fmt(yieldPreview)}`);
+  if (yieldPreview > 0n) {
+    console.log(`  Calling claimYield(${theRoundId}) to credit retained yield...`);
+    const yieldClaimTx = await mmc.write.claimYield([theRoundId], { account: player.account });
+    await publicClient.waitForTransactionReceipt({ hash: yieldClaimTx });
+    console.log(`  ✓ claimYield confirmed: ${yieldClaimTx}`);
+    const pendingBal = await mmc.read.pendingWithdrawals([playerAddr]);
+    console.log(`  Pending withdrawals: ${fmt(pendingBal)}`);
+    console.log(`  Call claimPrize() on the frontend or via another script to withdraw.`);
+  } else {
+    const tierNote = tier === 3
+      ? `Tier 3 VIP donates all yield to prize pool — nothing to claim`
+      : `No retained yield this round`;
+    console.log(`  ${tierNote}`);
+  }
   console.log();
 }
 
