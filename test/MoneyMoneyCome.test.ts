@@ -30,7 +30,7 @@ const ROUND_WAIT  = 121; // subsequent rounds also use 120s duration
 //    • TC-37:    checkUpkeep no longer requires participants; empty round settles directly
 //    • TC-47~50: NEW tests for pull-pattern functions
 
-describe("MoneyMoneyCome — 50 Test Cases", async function () {
+describe("MoneyMoneyCome — 51 Test Cases", async function () {
   const { viem, provider } = await network.connect();
 
   // ── 部署所有合约 ──────────────────────────────────────────────────────────
@@ -967,6 +967,78 @@ describe("MoneyMoneyCome — 50 Test Cases", async function () {
       await assert.rejects(async () => {
         await doClaimYield(ctx, ctx.user1, 1n);
       }, "Second claimYield call should revert");
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // TC-51  Unenrolled-user yield inflation fix
+  // ════════════════════════════════════════════════════════════════════════
+  describe("TC-51: Unenrolled user skips a round — no prize pool inflation", async function () {
+    it("TC-51: user who skips Round 1 should not inflate Round 2 prize pool", async function () {
+      // Setup: user1 deposits in Round 1 but does NOT call claimTicket (skips Round 1)
+      // user2 deposits fresh in Round 2 only
+      // Yield is simulated in both rounds
+      // Expected: Round 2 prizePool should only contain Round 2's actual yield contribution
+      //           from enrolled shares, NOT accumulated yield from user1's skipped-round shares
+
+      const ctx = await deployAll();
+
+      // Round 1: user1 enters (Tier 3, VIP — all yield to pool)
+      const deposit = 100n * ONE_USDC;
+      await enterGame(ctx, ctx.user1, deposit, 3);
+
+      // Simulate yield in Round 1
+      const yield1 = 20n * ONE_USDC;
+      await simulateYield(ctx, yield1);
+
+      // End Round 1 — user1 IS enrolled so prizePool gets the full yield
+      await increaseTime(ROUND1_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      const round1Info = await ctx.mmc.read.getCurrentRoundInfo();
+      // At this point we are in LOCKED state (round 1) — prizePool should have yield1
+      assert.ok(round1Info.prizePool >= yield1 - ONE_USDC, "Round 1 prizePool should include yield");
+
+      await ctx.mockVRF.write.fulfillRequest([1n, 0n]); // settle round 1, start round 2
+
+      // Round 2: user1 does NOT call claimTicket (intentionally skips round 2 enrollment)
+      // Simulate more yield in Round 2 (user1's shares are still in vault earning)
+      const yield2 = 10n * ONE_USDC;
+      await simulateYield(ctx, yield2);
+
+      // End Round 2 with NO participants (user1 didn't enroll)
+      await increaseTime(ROUND_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]); // no participants → settles immediately, carries prize
+
+      // Round 3 starts — now user1 calls claimTicket (rolls over from Round 1 → Round 3)
+      // The bug would have added user1's over-valued vaultShares (principal + yield1 + yield2)
+      // to round 3's enrolledVaultShares, inflating Round 3's totalYield
+      await doClaimTicket(ctx, ctx.user1);
+
+      // Verify user1 got their skipped-round yield credited to pendingWithdrawals
+      const pending = await ctx.mmc.read.pendingWithdrawals([ctx.user1.account.address]);
+      // user1 was NOT enrolled in Round 2, so they keep 100% of Round 2 yield on their shares
+      // yield2 = 10 USDC accrued on their shares → should be in pendingWithdrawals
+      assert.ok(pending > 0n, "User should receive skipped-round yield in pendingWithdrawals");
+
+      // Simulate yield in Round 3 (only from user1's now-correctly-sized shares)
+      const yield3 = 6n * ONE_USDC;
+      await simulateYield(ctx, yield3);
+
+      await increaseTime(ROUND_WAIT);
+      await ctx.mmc.write.performUpkeep(["0x"]);
+      const round3Info = await ctx.mmc.read.getCurrentRoundInfo();
+
+      // Round 3 prizePool should only contain:
+      //   - carried prize from Round 2 (which carried from Round 1's winner payout: 0 — winner got it)
+      //   - yield3 contribution from user1's Tier 3 (all yield to pool) = ~6 USDC
+      // It should NOT contain yield2 (10 USDC) from user1's skipped shares
+      // With bug: prizePool would be ~16+ USDC (yield2 + yield3 double-counted)
+      // Without bug: prizePool should be ~6 USDC (only yield3)
+      const maxExpected = 8n * ONE_USDC; // 6 USDC + tolerance
+      assert.ok(
+        round3Info.prizePool <= maxExpected,
+        `Round 3 prizePool should be ~6 USDC (yield3 only), got ${Number(round3Info.prizePool) / 1e6} USDC — inflation bug present`
+      );
     });
   });
 });

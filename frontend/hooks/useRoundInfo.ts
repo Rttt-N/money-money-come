@@ -48,12 +48,14 @@ export function useRoundInfo() {
   });
 
   // Accrued yield = vault total assets - total principal deposited
+  // Guard: when totalPrincipal=0 (new round, no one enrolled yet) the vault may still
+  // hold funds from the previous round, making the subtraction wildly incorrect.
   const accruedYield =
-    vaultTotalAssets !== undefined && roundInfo
+    vaultTotalAssets !== undefined && roundInfo && roundInfo.totalPrincipal > 0n
       ? vaultTotalAssets > roundInfo.totalPrincipal
         ? vaultTotalAssets - roundInfo.totalPrincipal
         : 0n
-      : undefined;
+      : 0n;
 
   // Countdown
   const [timeLeft, setTimeLeft] = useState<number>(0);

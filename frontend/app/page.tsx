@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRoundInfo, formatCountdown } from "@/hooks/useRoundInfo";
-import { formatUsdc } from "@/lib/contracts";
+import { formatUsdc, RoundState } from "@/lib/contracts";
 import { useUserInfo } from "@/hooks/useUserInfo";
 import { Trophy, Users, TrendingUp, Clock, Zap, ShieldCheck } from "lucide-react";
 
@@ -76,15 +76,17 @@ export default function HomePage() {
             </div>
             <div className="text-3xl font-bold text-white">
               {roundInfo
-                ? `$${formatUsdc(roundInfo.prizePool + (accruedYield ?? 0n))}`
+                ? `$${formatUsdc(
+                    state === RoundState.OPEN
+                      ? roundInfo.prizePool + accruedYield
+                      : roundInfo.prizePool
+                  )}`
                 : "—"}
             </div>
-            <div className="mt-1 text-xs text-white/40">USDC</div>
-            {accruedYield !== undefined && accruedYield > 0n && (
-              <div className="mt-1 text-xs text-emerald-400">
-                +${formatUsdc(accruedYield)} accruing from Aave
-              </div>
-            )}
+            {state === RoundState.OPEN
+              ? <div className="mt-1 text-xs text-white/40">USDC · est. (confirmed at draw)</div>
+              : <div className="mt-1 text-xs text-white/40">USDC · confirmed</div>
+            }
           </div>
 
           {/* Countdown */}

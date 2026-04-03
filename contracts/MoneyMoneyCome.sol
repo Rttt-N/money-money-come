@@ -394,6 +394,29 @@ contract MoneyMoneyCome is
         // Mark rollover as processed for this round (prevents double loyalty on retry)
         u.roundJoined = currentRound;
 
+        // Bug fix: if the user skipped one or more intermediate rounds (either they
+        // were never enrolled in prevRound, or currentRound > prevRound+1), their vault
+        // shares accumulated yield outside of any _harvestYieldGlobal() sweep.
+        // Enrolling those over-valued shares inflates enrolledVaultShares > totalPrincipal,
+        // causing _harvestYieldGlobal() to over-count yield and inflate the prize pool.
+        //
+        // Fix: redeem the accumulated excess yield now so u.vaultShares represents exactly
+        // u.principal before enrollment. The user keeps 100% of the skipped-round yield
+        // (they weren't contributing to any prize pool during that period).
+        bool skippedRounds = !wasEnrolled || currentRound > prevRound + 1;
+        if (skippedRounds && u.vaultShares > 0) {
+            uint256 currentValue = vault.previewRedeem(u.vaultShares);
+            if (currentValue > u.principal) {
+                uint256 accYield    = currentValue - u.principal;
+                uint256 yieldShares = vault.previewWithdraw(accYield);
+                if (yieldShares > 0 && yieldShares <= u.vaultShares) {
+                    uint256 received = vault.redeem(yieldShares, address(this), address(this));
+                    u.vaultShares -= yieldShares;
+                    if (received > 0) pendingWithdrawals[user] += received;
+                }
+            }
+        }
+
         // 4. Enroll in current round (only if OPEN and not expired/full)
         RoundInfo storage r = rounds[currentRound];
         if (r.state != RoundState.OPEN || block.timestamp >= r.endTime) return;
@@ -649,6 +672,7 @@ contract MoneyMoneyCome is
             r.winner = address(0);
             emit DrawFulfilled(currentRound, address(0), 0);
             uint256 carry = r.prizePool;
+            r.prizePool = 0;
             _startNewRound();
             if (carry > 0) rounds[currentRound].prizePool += carry;
             return;
@@ -703,6 +727,7 @@ contract MoneyMoneyCome is
             r.state = RoundState.SETTLED;
             emit DrawFulfilled(roundId, address(0), r.prizePool);
             uint256 carry = r.prizePool;
+            r.prizePool = 0;
             _startNewRound();
             if (carry > 0) rounds[currentRound].prizePool += carry;
             return;
@@ -759,7 +784,8 @@ contract MoneyMoneyCome is
         // Now: loyalty is incremented lazily per-user in _processRollover()
         //      when the user calls claimTicket() for the next round.
 
-        r.state = RoundState.SETTLED;
+        r.state     = RoundState.SETTLED;
+        r.prizePool = 0;
         emit DrawFulfilled(roundId, winner, prize);
 
         // O(1): just initialises a new RoundInfo struct — no participant loop, no NFT minting
