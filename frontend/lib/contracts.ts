@@ -122,6 +122,13 @@ export const MMC_ABI = [
     inputs: [],
     outputs: [{ type: "uint256" }],
   },
+  {
+    name: "totalRetainWeightedPrincipal",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
   // Writes
   {
     name: "performUpkeep",
@@ -421,6 +428,13 @@ export const VAULT_ABI = [
     type: "function" as const,
     name: "totalAssets",
     inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view" as const,
+  },
+  {
+    type: "function" as const,
+    name: "previewRedeem",
+    inputs: [{ name: "shares", type: "uint256" }],
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view" as const,
   },
