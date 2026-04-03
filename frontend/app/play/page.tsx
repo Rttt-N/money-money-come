@@ -168,7 +168,7 @@ export default function PlayPage() {
               {userInfo!.tier1Amount > 0n && ` | T1: $${formatUsdc(userInfo!.tier1Amount)}`}
               {userInfo!.tier2Amount > 0n && ` | T2: $${formatUsdc(userInfo!.tier2Amount)}`}
               {userInfo!.tier3Amount > 0n && ` | T3: $${formatUsdc(userInfo!.tier3Amount)}`}.
-              Add more funds below to increase your weight.{" "}
+              Depositing now will also roll you over into this round automatically.{" "}
               <Link href="/dashboard" className="underline">
                 View dashboard
               </Link>
@@ -336,7 +336,8 @@ export default function PlayPage() {
 
             <div className="mb-4 flex items-start gap-2 rounded-lg bg-white/5 p-3 text-xs text-white/40">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-400/60" />
-              Your principal is always withdrawable. Only yield is at stake.
+              Your principal is always withdrawable. After each round, visit Dashboard to
+              claim your ticket and any retained yield.
             </div>
 
             <button

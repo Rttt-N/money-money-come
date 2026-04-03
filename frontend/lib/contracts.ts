@@ -23,6 +23,7 @@ export const MMC_ABI = [
           { name: "startTime", type: "uint256" },
           { name: "endTime", type: "uint256" },
           { name: "totalPrincipal", type: "uint256" },
+          { name: "enrolledVaultShares", type: "uint256" },
           { name: "prizePool", type: "uint256" },
           { name: "totalWeight", type: "uint256" },
           { name: "state", type: "uint8" },
@@ -88,6 +89,33 @@ export const MMC_ABI = [
     outputs: [{ type: "uint256" }],
   },
   {
+    name: "needsRollover",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    name: "previewClaimYield",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "roundId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "userYieldClaimed",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "roundId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+  {
     name: "roundDuration",
     type: "function",
     stateMutability: "view",
@@ -139,6 +167,20 @@ export const MMC_ABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "claimTicket",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: "claimYield",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "roundId", type: "uint256" }],
     outputs: [],
   },
   // Events
@@ -193,6 +235,23 @@ export const MMC_ABI = [
     type: "event",
     inputs: [
       { name: "recipient", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    name: "TicketClaimed",
+    type: "event",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "roundId", type: "uint256", indexed: true },
+    ],
+  },
+  {
+    name: "YieldClaimed",
+    type: "event",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "roundId", type: "uint256", indexed: true },
       { name: "amount", type: "uint256", indexed: false },
     ],
   },
