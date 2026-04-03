@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { Navbar } from "@/components/Navbar";
+import { WinnerModal } from "@/components/WinnerModal";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -23,6 +24,7 @@ export default function RootLayout({
         <Providers>
           <div className="min-h-screen flex flex-col">
             <Navbar />
+            <WinnerModal />
             <main className="flex-1">{children}</main>
             <footer className="border-t border-white/5 py-6 text-center text-xs text-white/30">
               MoneyMoneyCome Protocol · Built on Aave V3 &amp; Chainlink VRF
