@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount, useWriteContract } from "wagmi";
+import { useAccount, useWriteContract, usePublicClient } from "wagmi";
 import { parseUnits } from "viem";
 import { useUserInfo } from "@/hooks/useUserInfo";
 import { useRoundInfo } from "@/hooks/useRoundInfo";
@@ -32,6 +32,7 @@ export default function PlayPage() {
   const [txError, setTxError] = useState("");
 
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
 
   const amountBig = (() => {
     try {
@@ -74,12 +75,15 @@ export default function PlayPage() {
     try {
       if (needsApprove) {
         setStep("approving");
-        await writeContractAsync({
+        const approveTxHash = await writeContractAsync({
           address: addresses.usdc,
           abi: ERC20_ABI,
           functionName: "approve",
           args: [addresses.mmc, amountBig],
         });
+        // Wait for approve to be mined before calling enterGame,
+        // otherwise the contract still sees allowance = 0.
+        await publicClient!.waitForTransactionReceipt({ hash: approveTxHash });
         await refetch();
       }
 
