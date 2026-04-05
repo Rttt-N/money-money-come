@@ -14,6 +14,11 @@ if (!SEPOLIA_RPC_URL || !SEPOLIA_PRIVATE_KEY) {
 
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin],
+  verify: {
+    etherscan: {
+      apiKey: configVariable("ETHERSCAN_API_KEY"),
+    },
+  },
   solidity: {
     profiles: {
       default: {
