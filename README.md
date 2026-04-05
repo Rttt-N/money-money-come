@@ -368,6 +368,36 @@ npx hardhat test
 
 ---
 
+## Deployed Contract Addresses
+
+### Local Hardhat (Chain ID: 31337)
+
+| Contract | Address |
+|----------|---------|
+| MoneyMoneyCome | `0x0165878A594ca255338adfa4d48449f69242Eb8f` |
+| MockUSDC | `0x5FbDB2315678afecb367f032d93F642f64180aa3` |
+| YieldVault | `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9` |
+| SquadRegistry | `0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9` |
+| TicketNFT | `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707` |
+| MockVRFCoordinator | `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0` |
+
+> Local addresses are reset on every `npx hardhat node` + redeploy. The values above reflect the most recent local deployment.
+
+### Sepolia Testnet (Chain ID: 11155111)
+
+| Contract | Address |
+|----------|---------|
+| MoneyMoneyCome | `0x34d97fA2c079efBe1a2409EDb2E794560c5a987c` |
+| MockUSDC | `0xc24EC100d5Cd75231Ee1779c133105A164f1E02b` |
+| YieldVault | `0xeB3Ae36aDbE22DA8927e36df234aE7F8E8e7fa2c` |
+| SquadRegistry | `0xFAD5bD031E0F0ed876870fA89c02AFC16b410438` |
+| TicketNFT | `0x51BdD29Fc7a17dA3f83fB7E532eeA85C8EB0a060` |
+| MockAToken | `0xb2FC32cC6bc119aE72A1a0a547b3aFf32EE56F8d` |
+
+> To add MockUSDC to MetaMask on Sepolia: Import Token → paste the MockUSDC address above.
+
+---
+
 ## Security Audit
 
 See `test/security_audit_report.html` for the full audit report.
