@@ -29,3 +29,10 @@ CLAUDE.md
 DESIGN_NOTES.md
 
 .env
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Claude Code local settings
+.claude/
