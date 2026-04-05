@@ -1,7 +1,7 @@
 "use client";
 
 import { useReadContract, useChainId } from "wagmi";
-import { MMC_ABI, getAddresses } from "@/lib/contracts";
+import { MMC_ABI, VAULT_ABI, getAddresses } from "@/lib/contracts";
 import { useEffect, useState } from "react";
 
 export function useRoundInfo() {
@@ -39,6 +39,48 @@ export function useRoundInfo() {
     },
   });
 
+  // Read vault.previewRedeem(enrolledVaultShares) — current USDC value of enrolled shares only.
+  // This is accurate: excludes unenrolled users' principal and avoids over-counting.
+  const { data: enrolledCurrentValue } = useReadContract({
+    address: addresses?.vault,
+    abi: VAULT_ABI,
+    functionName: "previewRedeem",
+    args: roundInfo ? [roundInfo.enrolledVaultShares] : undefined,
+    query: {
+      enabled: !!addresses?.vault && !!roundInfo && roundInfo.enrolledVaultShares > 0n,
+      refetchInterval: 10_000,
+    },
+  });
+
+  // Read totalRetainWeightedPrincipal = Σ(principal_i × retainBps_i / BPS_DENOM)
+  // Used to split total yield into pool portion vs. user-retained portion.
+  const { data: totalRetainWeightedPrincipal } = useReadContract({
+    address: addresses?.mmc,
+    abi: MMC_ABI,
+    functionName: "totalRetainWeightedPrincipal",
+    query: { enabled: !!addresses?.mmc, refetchInterval: 10_000 },
+  });
+
+  // Total yield accrued by enrolled shares this round.
+  const totalAccruedYield =
+    enrolledCurrentValue !== undefined && roundInfo && roundInfo.totalPrincipal > 0n
+      ? enrolledCurrentValue > roundInfo.totalPrincipal
+        ? enrolledCurrentValue - roundInfo.totalPrincipal
+        : 0n
+      : 0n;
+
+  // Estimated yield going to prize pool = totalYield × (1 - retainFraction)
+  // retainFraction = totalRetainWeightedPrincipal / totalPrincipal
+  // toPool = totalYield × (totalPrincipal - totalRetainWeightedPrincipal) / totalPrincipal
+  const accruedYield = (() => {
+    if (totalAccruedYield === 0n || !roundInfo || roundInfo.totalPrincipal === 0n) return 0n;
+    const retain = totalRetainWeightedPrincipal ?? 0n;
+    const poolFraction = roundInfo.totalPrincipal > retain
+      ? roundInfo.totalPrincipal - retain
+      : 0n;
+    return (totalAccruedYield * poolFraction) / roundInfo.totalPrincipal;
+  })();
+
   // Countdown
   const [timeLeft, setTimeLeft] = useState<number>(0);
 
@@ -55,7 +97,7 @@ export function useRoundInfo() {
     return () => clearInterval(id);
   }, [roundInfo]);
 
-  return { roundInfo, currentRound, participants, timeLeft, refetch };
+  return { roundInfo, currentRound, participants, timeLeft, accruedYield, refetch };
 }
 
 export function formatCountdown(ms: number): string {

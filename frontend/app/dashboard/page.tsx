@@ -33,14 +33,16 @@ const TIER_STYLES: Record<number, { gradient: string; ring: string; label: strin
 
 export default function DashboardPage() {
   const { address } = useAccount();
-  const { userInfo, winProb, usdcBalance, nftBalance, addresses, refetch } = useUserInfo();
-  const { roundInfo, currentRound } = useRoundInfo();
+  const { userInfo, winProb, usdcBalance, nftBalance, rolloverNeeded, addresses, refetch } = useUserInfo();
+  const { roundInfo, currentRound, accruedYield } = useRoundInfo();
 
   const [withdrawStep, setWithdrawStep] = useState<"idle" | "confirm" | "pending" | "done">("idle");
   const [partialAmount, setPartialAmount] = useState("");
   const [withdrawMode, setWithdrawMode] = useState<"full" | "partial">("full");
   const [finalWithdrawAmount, setFinalWithdrawAmount] = useState(0n); // BUG-03: capture before refetch zeroes principal
   const [claimStep, setClaimStep] = useState<"idle" | "pending" | "done">("idle");
+  const [ticketStep, setTicketStep] = useState<"idle" | "pending" | "done">("idle");
+  const [yieldStep, setYieldStep] = useState<"idle" | "pending" | "done">("idle");
 
   const { writeContractAsync } = useWriteContract();
 
@@ -55,7 +57,32 @@ export default function DashboardPage() {
     },
   });
 
+  // The round to check for claimable yield: if needsRollover, user is still on roundJoined;
+  // otherwise check the previous round (currentRound - 1).
+  const yieldRoundId =
+    userInfo && currentRound !== undefined
+      ? rolloverNeeded
+        ? userInfo.roundJoined
+        : currentRound > 1n
+          ? currentRound - 1n
+          : 0n
+      : undefined;
+
+  const { data: claimableYield, refetch: refetchYield } = useReadContract({
+    address: addresses?.mmc,
+    abi: MMC_ABI,
+    functionName: "previewClaimYield",
+    args: address && yieldRoundId !== undefined && yieldRoundId > 0n
+      ? [yieldRoundId, address]
+      : undefined,
+    query: {
+      enabled: !!addresses?.mmc && !!address && yieldRoundId !== undefined && yieldRoundId > 0n,
+      refetchInterval: 10_000,
+    },
+  });
+
   const hasPrize = pendingPrize !== undefined && pendingPrize > 0n;
+  const hasClaimableYield = claimableYield !== undefined && claimableYield > 0n;
 
   async function handleClaim() {
     if (!addresses || !hasPrize) return;
@@ -71,6 +98,41 @@ export default function DashboardPage() {
     } catch (err) {
       console.error(err);
       setClaimStep("idle");
+    }
+  }
+
+  async function handleClaimTicket() {
+    if (!addresses) return;
+    setTicketStep("pending");
+    try {
+      await writeContractAsync({
+        address: addresses.mmc,
+        abi: MMC_ABI,
+        functionName: "claimTicket",
+      });
+      setTicketStep("done");
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      setTicketStep("idle");
+    }
+  }
+
+  async function handleClaimYield() {
+    if (!addresses || yieldRoundId === undefined || yieldRoundId === 0n) return;
+    setYieldStep("pending");
+    try {
+      await writeContractAsync({
+        address: addresses.mmc,
+        abi: MMC_ABI,
+        functionName: "claimYield",
+        args: [yieldRoundId],
+      });
+      setYieldStep("done");
+      await Promise.all([refetch(), refetchPrize(), refetchYield()]);
+    } catch (err) {
+      console.error(err);
+      setYieldStep("idle");
     }
   }
 
@@ -186,8 +248,8 @@ export default function DashboardPage() {
           <div className="mb-4 text-5xl">🎫</div>
           <h2 className="mb-2 text-xl font-bold text-white">No active position</h2>
           <p className="mb-8 text-white/50">
-            Deposit once and your funds automatically roll over into every future round.
-            No need to re-deposit each week!
+            Deposit USDC and start earning yield in the prize pool. After each round,
+            click &quot;Claim Ticket&quot; to roll over into the next round.
           </p>
           <Link href="/play" className="btn-primary">
             Join Round #{currentRound?.toString() ?? "…"}
@@ -317,10 +379,16 @@ export default function DashboardPage() {
               <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-white/40">
                 Current Round Info
               </h3>
-              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 text-sm">
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4 text-sm">
                 <div>
                   <div className="text-white/40">Prize Pool</div>
                   <div className="font-bold text-white">${formatUsdc(roundInfo.prizePool)}</div>
+                </div>
+                <div>
+                  <div className="text-white/40">Accrued Interest</div>
+                  <div className="font-bold text-emerald-400">
+                    +${formatUsdc(accruedYield ?? 0n)}
+                  </div>
                 </div>
                 <div>
                   <div className="text-white/40">Total Deposited</div>
@@ -347,6 +415,84 @@ export default function DashboardPage() {
 
         {/* Right column: claim + withdraw panel */}
         <div className="space-y-4">
+          {/* Claim Ticket — pull-pattern rollover */}
+          {rolloverNeeded && ticketStep !== "done" && (
+            <div className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-blue-500/10 p-6">
+              <div className="mb-2 flex items-center gap-2">
+                <Star className="h-5 w-5 text-cyan-400" />
+                <h3 className="font-semibold text-white">Claim Ticket</h3>
+              </div>
+              <p className="mb-4 text-xs text-white/50">
+                You have a deposit from round #{userInfo?.roundJoined?.toString()} but are not
+                yet enrolled in round #{currentRound?.toString()}. Claim your ticket to roll
+                over and keep your loyalty streak.
+              </p>
+              <button
+                onClick={handleClaimTicket}
+                disabled={ticketStep === "pending"}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {ticketStep === "pending" ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Rolling over…
+                  </>
+                ) : (
+                  "Claim Ticket & Roll Over"
+                )}
+              </button>
+            </div>
+          )}
+          {ticketStep === "done" && (
+            <div className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-6 text-center">
+              <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-cyan-400" />
+              <div className="font-semibold text-white">Enrolled in Round #{currentRound?.toString()}!</div>
+              <button onClick={() => setTicketStep("idle")} className="mt-2 text-xs text-white/40 underline">
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Claim Yield — pull-pattern retained yield */}
+          {hasClaimableYield && yieldStep !== "done" && (
+            <div className="rounded-2xl border border-emerald-400/30 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 p-6">
+              <div className="mb-2 flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-emerald-400" />
+                <h3 className="font-semibold text-white">Claim Yield</h3>
+              </div>
+              <div className="mb-1 text-2xl font-bold text-emerald-400">
+                ${formatUsdc(claimableYield!)} USDC
+              </div>
+              <p className="mb-4 text-xs text-white/50">
+                Your retained yield from round #{yieldRoundId?.toString()} is ready to claim.
+              </p>
+              <button
+                onClick={handleClaimYield}
+                disabled={yieldStep === "pending"}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {yieldStep === "pending" ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Claiming yield…
+                  </>
+                ) : (
+                  "Claim Retained Yield"
+                )}
+              </button>
+            </div>
+          )}
+          {yieldStep === "done" && (
+            <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-6 text-center">
+              <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-400" />
+              <div className="font-semibold text-white">Yield Credited!</div>
+              <p className="text-xs text-white/40 mt-1">Check &quot;Prize Available&quot; to withdraw.</p>
+              <button onClick={() => setYieldStep("idle")} className="mt-2 text-xs text-white/40 underline">
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Claim Prize */}
           {hasPrize && claimStep !== "done" && (
             <div className="rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-500/10 to-orange-500/10 p-6">
@@ -389,8 +535,8 @@ export default function DashboardPage() {
               Withdraw Funds
             </div>
             <p className="mb-5 text-xs text-white/40">
-              Your position rolls over automatically each round. Withdraw anytime — interest
-              may be penalised if the round is in LOCKED or DRAWING state.
+              Withdraw anytime — interest may be penalised if the round is in LOCKED or
+              DRAWING state. After each round, use &quot;Claim Ticket&quot; to re-enroll.
             </p>
 
             {/* Full / Partial toggle */}

@@ -7,7 +7,7 @@ export const config = createConfig({
   connectors: [injected()],
   transports: {
     [hardhat.id]: http("http://127.0.0.1:8545"),
-    [sepolia.id]: http(process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL),
+    [sepolia.id]: http("https://sepolia.infura.io/v3/10cf6e9992e0469c8c2ad7ff21e88f40"),
   },
 });
 

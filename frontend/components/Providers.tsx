@@ -4,10 +4,15 @@ import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConnectKitProvider } from "connectkit";
 import { config } from "@/lib/wagmi";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <WagmiProvider config={config}>
@@ -19,7 +24,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             hideTooltips: false,
           }}
         >
-          {children}
+          {mounted ? children : null}
         </ConnectKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount, useWriteContract } from "wagmi";
+import { useAccount, useWriteContract, usePublicClient } from "wagmi";
 import { parseUnits } from "viem";
 import { useUserInfo } from "@/hooks/useUserInfo";
 import { useRoundInfo } from "@/hooks/useRoundInfo";
@@ -32,6 +32,7 @@ export default function PlayPage() {
   const [txError, setTxError] = useState("");
 
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
 
   const amountBig = (() => {
     try {
@@ -74,12 +75,15 @@ export default function PlayPage() {
     try {
       if (needsApprove) {
         setStep("approving");
-        await writeContractAsync({
+        const approveTxHash = await writeContractAsync({
           address: addresses.usdc,
           abi: ERC20_ABI,
           functionName: "approve",
           args: [addresses.mmc, amountBig],
         });
+        // Wait for approve to be mined before calling enterGame,
+        // otherwise the contract still sees allowance = 0.
+        await publicClient!.waitForTransactionReceipt({ hash: approveTxHash });
         await refetch();
       }
 
@@ -168,7 +172,7 @@ export default function PlayPage() {
               {userInfo!.tier1Amount > 0n && ` | T1: $${formatUsdc(userInfo!.tier1Amount)}`}
               {userInfo!.tier2Amount > 0n && ` | T2: $${formatUsdc(userInfo!.tier2Amount)}`}
               {userInfo!.tier3Amount > 0n && ` | T3: $${formatUsdc(userInfo!.tier3Amount)}`}.
-              Add more funds below to increase your weight.{" "}
+              Depositing now will also roll you over into this round automatically.{" "}
               <Link href="/dashboard" className="underline">
                 View dashboard
               </Link>
@@ -177,7 +181,7 @@ export default function PlayPage() {
         </div>
       )}
 
-      {!isOpen && !alreadyIn && (
+      {roundInfo !== undefined && !isOpen && !alreadyIn && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-red-400">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <div>
@@ -336,7 +340,8 @@ export default function PlayPage() {
 
             <div className="mb-4 flex items-start gap-2 rounded-lg bg-white/5 p-3 text-xs text-white/40">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-400/60" />
-              Your principal is always withdrawable. Only yield is at stake.
+              Your principal is always withdrawable. After each round, visit Dashboard to
+              claim your ticket and any retained yield.
             </div>
 
             <button

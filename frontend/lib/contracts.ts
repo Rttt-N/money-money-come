@@ -23,6 +23,7 @@ export const MMC_ABI = [
           { name: "startTime", type: "uint256" },
           { name: "endTime", type: "uint256" },
           { name: "totalPrincipal", type: "uint256" },
+          { name: "enrolledVaultShares", type: "uint256" },
           { name: "prizePool", type: "uint256" },
           { name: "totalWeight", type: "uint256" },
           { name: "state", type: "uint8" },
@@ -88,7 +89,41 @@ export const MMC_ABI = [
     outputs: [{ type: "uint256" }],
   },
   {
+    name: "needsRollover",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    name: "previewClaimYield",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "roundId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "userYieldClaimed",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "roundId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+  {
     name: "roundDuration",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "totalRetainWeightedPrincipal",
     type: "function",
     stateMutability: "view",
     inputs: [],
@@ -139,6 +174,20 @@ export const MMC_ABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    name: "claimTicket",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: "claimYield",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "roundId", type: "uint256" }],
     outputs: [],
   },
   // Events
@@ -193,6 +242,23 @@ export const MMC_ABI = [
     type: "event",
     inputs: [
       { name: "recipient", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    name: "TicketClaimed",
+    type: "event",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "roundId", type: "uint256", indexed: true },
+    ],
+  },
+  {
+    name: "YieldClaimed",
+    type: "event",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "roundId", type: "uint256", indexed: true },
       { name: "amount", type: "uint256", indexed: false },
     ],
   },
@@ -352,6 +418,25 @@ export const TICKET_NFT_ABI = [
     stateMutability: "view",
     inputs: [],
     outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+// ── YieldVault ABI (minimal, for reading totalAssets) ─────────────────────────
+
+export const VAULT_ABI = [
+  {
+    type: "function" as const,
+    name: "totalAssets",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view" as const,
+  },
+  {
+    type: "function" as const,
+    name: "previewRedeem",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view" as const,
   },
 ] as const;
 

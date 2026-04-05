@@ -8,10 +8,11 @@
     "mockVRF": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0"
   },
   "11155111": {
-    "mmc": "0x2f70bdb93aaedc4409049f71817555f296dad113",
-    "usdc": "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8",
-    "vault": "0x22ea720d356e43ba55044296cb646f393b1c6267",
-    "squadRegistry": "0xae631953f7eb95a0f95d473fea3de628c9fd5b6a",
-    "ticketNFT": "0x8bfead8db8c98f0b58188be797134679b5874c1c"
+    "mmc": "0x34d97fa2c079efbe1a2409edb2e794560c5a987c",
+    "usdc": "0xc24ec100d5cd75231ee1779c133105a164f1e02b",
+    "vault": "0xeb3ae36adbe22da8927e36df234ae7f8e8e7fa2c",
+    "squadRegistry": "0xfad5bd031e0f0ed876870fa89c02afc16b410438",
+    "ticketNFT": "0x51bdd29fc7a17da3f83fb7e532eea85c8eb0a060",
+    "mockAToken": "0xb2FC32cC6bc119aE72A1a0a547b3aFf32EE56F8d"
   }
 }

@@ -78,9 +78,20 @@ export function useUserInfo() {
     },
   });
 
+  const { data: rolloverNeeded, refetch: refetchRollover } = useReadContract({
+    address: addresses?.mmc,
+    abi: MMC_ABI,
+    functionName: "needsRollover",
+    args: userAddress ? [userAddress] : undefined,
+    query: {
+      enabled: !!addresses?.mmc && !!userAddress,
+      refetchInterval: 10_000,
+    },
+  });
+
   // BUG-04: return Promise so callers can await actual data refresh
   const refetch = async () => {
-    await Promise.all([refetchUser(), refetchProb(), refetchUsdc(), refetchAllowance(), refetchNFT()]); // NEW-FM-5: include NFT
+    await Promise.all([refetchUser(), refetchProb(), refetchUsdc(), refetchAllowance(), refetchNFT(), refetchRollover()]);
   };
 
   return {
@@ -89,6 +100,7 @@ export function useUserInfo() {
     usdcBalance,
     usdcAllowance,
     nftBalance,
+    rolloverNeeded,
     userAddress,
     addresses,
     refetch,

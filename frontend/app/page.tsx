@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRoundInfo, formatCountdown } from "@/hooks/useRoundInfo";
-import { formatUsdc } from "@/lib/contracts";
+import { formatUsdc, RoundState } from "@/lib/contracts";
 import { useUserInfo } from "@/hooks/useUserInfo";
 import { Trophy, Users, TrendingUp, Clock, Zap, ShieldCheck } from "lucide-react";
 
@@ -14,7 +14,7 @@ const STATE_LABELS: Record<number, { label: string; color: string }> = {
 };
 
 export default function HomePage() {
-  const { roundInfo, currentRound, participants, timeLeft } = useRoundInfo();
+  const { roundInfo, currentRound, participants, timeLeft, accruedYield } = useRoundInfo();
   const { userInfo } = useUserInfo();
 
   const state = roundInfo?.state ?? 0;
@@ -75,9 +75,18 @@ export default function HomePage() {
               Prize Pool
             </div>
             <div className="text-3xl font-bold text-white">
-              {roundInfo ? `$${formatUsdc(roundInfo.prizePool)}` : "—"}
+              {roundInfo
+                ? `$${formatUsdc(
+                    state === RoundState.OPEN
+                      ? roundInfo.prizePool + accruedYield
+                      : roundInfo.prizePool
+                  )}`
+                : "—"}
             </div>
-            <div className="mt-1 text-xs text-white/40">USDC</div>
+            {state === RoundState.OPEN
+              ? <div className="mt-1 text-xs text-white/40">USDC · est. (confirmed at draw)</div>
+              : <div className="mt-1 text-xs text-white/40">USDC · confirmed</div>
+            }
           </div>
 
           {/* Countdown */}

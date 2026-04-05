@@ -1,0 +1,463 @@
+Sepolia 测试网部署指南 — MoneyMoneyCome（混合模式）
+====================================================
+部署方案：真实 Chainlink VRF + 真实 Chainlink Automation + MockAave + MockUSDC
+所有资产（ETH、LINK）为测试代币；USDC 由 MockUSDC 合约自由 mint。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第一部分：准备工作（浏览器操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 1 — 准备测试钱包
+  - 打开 MetaMask，创建一个专用测试账户（不要用存有真实资产的钱包）
+  - 切换网络到 Sepolia Testnet
+  - 导出该账户私钥：账户右上角 ⋮ → Account Details → Show Private Key
+
+步骤 2 — 领取 Sepolia ETH 和 LINK（支付 gas 和 VRF / Automation 费用）
+  网址：https://faucets.chain.link/sepolia
+  操作：连接 MetaMask → 勾选 ETH 和 LINK → 点击 Send request
+  到账：约 1-2 分钟
+  建议至少领取 5 LINK（VRF + Automation 各消耗）
+
+步骤 3 — 创建 VRF 订阅（如尚未创建）
+  本项目当前订阅 ID（已配置在 .env）：
+  109573863372455221717441888330948782969467001318369201167613799880233765417191
+
+  如需新建：
+    网址：https://vrf.chain.link/sepolia
+    操作：Connect Wallet → Create Subscription → 确认交易 → 记录 Subscription ID
+    充值：Fund subscription → 充入至少 3 LINK
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第二部分：配置文件（确认后填写）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+.env 文件位置：money-money-come/.env
+
+  SEPOLIA_RPC_URL     = https://sepolia.infura.io/v3/10cf6e9992e0469c8c2ad7ff21e88f40
+  SEPOLIA_PRIVATE_KEY = 0x你的测试钱包私钥
+  VRF_SUBSCRIPTION_ID = 109573863372455221717441888330948782969467001318369201167613799880233765417191
+
+注意：私钥请妥善保管，不要提交到 Git。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第三部分：部署合约（终端操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 4 — 进入项目目录
+  cd C:\Users\admin\Desktop\FT5004\money-money-come
+
+步骤 5 — 运行测试（可选但推荐）
+  npx hardhat test
+  → 应显示 55 个测试全部通过
+
+步骤 6 — 部署所有合约到 Sepolia
+  npx hardhat run scripts/deploy.ts --network sepolia
+
+  预期输出（示例）：
+    [Mocks] Deploying MockUSDC + MockAavePool...
+      MockUSDC           : 0xAAAA...    ← 记录此地址（步骤 11 用）
+      MockAavePool       : 0xBBBB...
+      MockAToken         : 0xCCCC...
+      MockAToken yieldRate: 200 bps/min (2%/min) ✓
+    [Sepolia] Using real Chainlink VRF...
+      VRF Coordinator    : 0x9DdfaCa8...
+      VRF Subscription   : 10957386...
+    [Core] Deploying protocol contracts...
+      YieldVault         : 0xDDDD...
+      SquadRegistry      : 0xEEEE...
+      TicketNFT          : 0xFFFF...
+      MoneyMoneyCome     : 0x1111...   ← 记录此地址（步骤 7、8 使用）
+
+  部署完成后，合约地址自动写入：
+    frontend/lib/addresses.json（chainId: 11155111）
+
+  注意：
+    - 默认轮次时长 5 分钟（300 秒）
+    - VRF callbackGasLimit = 400,000（O(1) VRF 回调；NFT mint 和 rollover 已移至用户自调用的 claimTicket()）
+
+  本次部署地址记录：
+    MMC:
+    MUSDC:
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第四部分：VRF Consumer 配置（浏览器操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 7 — 添加 MoneyMoneyCome 为 VRF Consumer
+  网址：https://vrf.chain.link/sepolia
+  操作：
+    1. 找到你的订阅
+    2. 点击 Add Consumer
+    3. 粘贴步骤 6 输出的 MoneyMoneyCome 地址
+    4. 确认交易
+
+  ⚠ 此步骤必须在运行 demo 前完成，否则 VRF 请求会报 InvalidConsumer 错误。
+  ⚠ 每次重新部署合约后，合约地址变更，必须重新添加 Consumer。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第五部分：Chainlink Automation 注册（浏览器 + 终端）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Automation 的作用：每当一轮游戏到期，Chainlink 节点自动调用 performUpkeep 触发开奖，
+无需手动运行脚本或等待 demo.ts。
+
+步骤 8 — 注册 Upkeep（浏览器）
+  网址：https://automation.chain.link/sepolia
+  操作：
+    1. 点击 Register New Upkeep
+    2. Trigger 选择 Custom Logic
+    3. Target contract address: 粘贴 MoneyMoneyCome 地址
+    4. Upkeep name: MoneyMoneyCome（自定义）
+    5. Gas limit: 填 500000（performUpkeep 自身的 gas，不含 VRF 回调）
+    6. Starting balance: 填 2（LINK）
+    7. 点击 Register upkeep → 确认两笔交易（approve LINK + register）
+    8. 完成后记录页面 URL 末尾的 Upkeep ID（纯数字）
+
+步骤 9 — 绑定 Forwarder 地址到合约（终端）
+  注册成功后，Chainlink 会为这个 Upkeep 分配一个专属 Forwarder 地址。
+  需要把这个地址绑定到合约，使只有 Chainlink 和 owner 可以触发开奖。
+
+  方式一（推荐）：提供 Upkeep ID，脚本自动从 Registry 读取 Forwarder 并绑定
+    UPKEEP_ID=你的UpkeepID npx hardhat run scripts/set-automation-forwarder.ts --network sepolia
+
+  方式二（手动）：在 automation.chain.link 找到 Upkeep → 复制 Forwarder address 后运行
+    FORWARDER=0x你的Forwarder地址 npx hardhat run scripts/set-automation-forwarder.ts --network sepolia
+
+  方式三（清除绑定，恢复任何人均可调用的演示模式）：
+    FORWARDER=0x0000000000000000000000000000000000000000 npx hardhat run scripts/set-automation-forwarder.ts --network sepolia
+
+  预期输出：
+    MoneyMoneyCome       : 0x...
+    Current forwarder    : (not set — open mode)
+    Setting forwarder to : 0x...（Chainlink Forwarder）
+    ✓ Done.
+      Mode: RESTRICTED — only Chainlink Automation forwarder or owner
+
+  ⚠ 绑定后，只有 Chainlink Automation 节点和合约 owner 可以触发开奖。
+  ⚠ 每次重新部署合约后，需重新注册 Upkeep 并重新绑定 Forwarder。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第六部分：Mint 测试 USDC 并添加到 MetaMask
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 10 — Mint MockUSDC 到自己的钱包
+  npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  默认 mint 100,000 USDC 到部署者账户。
+  自定义金额和目标：
+    MINT_TO=0x你的地址 MINT_AMOUNT=5000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  PowerShell 写法：
+    $env:MINT_TO="0x你的地址"; $env:MINT_AMOUNT="5000"
+    npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+步骤 11 — 在 MetaMask 中显示 MockUSDC 余额
+  1. 打开 MetaMask → 确保在 Sepolia 网络
+  2. 点击 "Assets" 标签页底部的 "Import tokens"
+  3. Token contract address: 粘贴步骤 6 输出的 MockUSDC 地址
+  4. Token symbol: 自动填充为 "USDC"
+  5. Token decimal: 自动填充为 "6"
+  6. 点击 "Add Custom Token" → "Import Tokens"
+
+  现在 MetaMask 中可以看到你的 MockUSDC 余额了。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第七部分：测试运行（终端操作）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 12 — 运行演示脚本（全流程：存入 → 等待开奖 → 显示结果）
+  npx hardhat run scripts/demo.ts --network sepolia
+
+  可选参数：
+    DEPOSIT_USDC=200 TIER=2 YIELD_USDC=100 npx hardhat run scripts/demo.ts --network sepolia
+
+  演示流程说明：
+    1. 读取已部署合约地址
+    2. 检查 USDC 余额，不足时自动 Mint
+    3. Approve + enterGame（链上交易，约 15-30 秒确认）
+    4. 模拟 Aave 收益（+50 USDC，可通过 YIELD_USDC 自定义）
+    5. 等待轮次到期（默认 5 分钟）
+    6. 调用 performUpkeep，发送 VRF 请求
+       （接入 Automation 后，此步骤由 Chainlink 自动完成）
+    7. 每 10 秒轮询，等待 Chainlink VRF 回调（约 1-3 分钟）
+    8. 显示获奖者和奖金
+    9. Pull 模式处理（新架构）：
+       - 调用 claimTicket() 将本金 rollover 到新一轮（非自动）
+       - 调用 claimYield(roundId) 领取保留收益（仅 Tier 1/2 用户有余额）
+
+  注意：自动生息已启用（2%/分钟），5 分钟内自动累积约 10% 利息到奖池。
+
+步骤 13 — 手动模拟额外收益（可选）
+  npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+  自定义金额：
+    YIELD_AMOUNT=100 npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第八部分：启动前端
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+步骤 14 — 启动前端
+  cd frontend
+  npm install    （首次运行）
+  npm run dev
+
+  浏览器访问：http://localhost:3000
+  MetaMask 切换到 Sepolia 网络，连接测试钱包即可使用。
+
+  前端特性：
+  - 首页 Prize Pool 卡片显示实时累积利息（每 10 秒更新）
+  - Dashboard 显示 Accrued Interest 指标
+  - 所有金额显示为 USDC（MockUSDC 的 symbol 即为 USDC）
+
+步骤 15 — 多人测试（队友）
+  队友只需：
+    1. MetaMask 切换到 Sepolia
+    2. 自行从水龙头领取 Sepolia ETH（用于 gas）
+    3. 告知部署者自己的钱包地址，由部署者 mint USDC：
+       MINT_TO=0x队友地址 MINT_AMOUNT=1000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+    4. 队友在 MetaMask 中 Import Token（MockUSDC 地址）
+    5. 获取 frontend/lib/addresses.json（含 Sepolia 合约地址）
+    6. 本地运行 npm run dev，连接自己的 MetaMask
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第九部分：运行中管理（不重新部署的调整）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+调整 VRF 回调 Gas Limit（VRF 回调失败时使用，无需重新部署）：
+  GAS_LIMIT=1500000 npx hardhat run scripts/set-callback-gas.ts --network sepolia
+
+调整轮次时长（无需重新部署）：
+  ROUND_MINUTES=10 npx hardhat run scripts/set-round-duration.ts --network sepolia
+
+绑定 / 更换 Automation Forwarder：
+  UPKEEP_ID=你的ID npx hardhat run scripts/set-automation-forwarder.ts --network sepolia
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+第十部分：紧急处理（合约卡死时）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+如果轮次卡在 DRAWING 或 LOCKED 状态超过 10 分钟（VRF 回调失败）：
+
+  # 查看当前状态并强制结算（无赢家），自动开启新一轮
+  npx hardhat run scripts/emergency-reset.ts --network sepolia
+
+  效果：
+  - 当轮标记为 SETTLED（无赢家，奖池归零）
+  - 新一轮立即以 OPEN 状态开始
+  - ⚠ 注意：rollover 不再自动执行（Pull 模式）。Emergency reset 后，
+    每位用户需自行调用 claimTicket() 来加入新一轮。本金始终安全。
+
+  解决 VRF gas 不足问题（执行 emergency-reset 后操作）：
+  GAS_LIMIT=600000 npx hardhat run scripts/set-callback-gas.ts --network sepolia
+  （默认已是 400,000；如仍失败可逐步调高，无需超过 600,000）
+
+  ⚠ emergencyReset() 只有合约 owner（部署钱包）可以调用
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+快速命令汇总
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # 部署合约（MockUSDC + MockAave + 真实 VRF）
+  npx hardhat run scripts/deploy.ts --network sepolia
+
+  # Mint 测试 USDC
+  npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  # 给队友 mint USDC
+  MINT_TO=0x地址 MINT_AMOUNT=1000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  # 绑定 Chainlink Automation Forwarder（注册 Upkeep 后执行）
+  UPKEEP_ID=你的ID npx hardhat run scripts/set-automation-forwarder.ts --network sepolia
+
+  # 调整 VRF 回调 gas limit（不重新部署；默认 400,000，如需调高）
+  GAS_LIMIT=600000 npx hardhat run scripts/set-callback-gas.ts --network sepolia
+
+  # 调整轮次时长（不重新部署）
+  ROUND_MINUTES=5 npx hardhat run scripts/set-round-duration.ts --network sepolia
+
+  # 手动模拟额外收益
+  YIELD_AMOUNT=50 npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+  # 运行完整演示
+  npx hardhat run scripts/demo.ts --network sepolia
+
+  # 紧急重置卡死的轮次（VRF 失败时使用）
+  npx hardhat run scripts/emergency-reset.ts --network sepolia
+
+  # 启动前端
+  cd frontend && npm run dev
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+常见问题
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Q: 部署失败，提示 insufficient funds
+A: 钱包 Sepolia ETH 不足，去 https://faucets.chain.link/sepolia 领取。
+
+Q: performUpkeep 报错 0x5247fdce（InvalidConsumer）
+A: MoneyMoneyCome 未添加为 VRF Subscription 的 Consumer。
+   去 vrf.chain.link/sepolia → 找到订阅 → Add Consumer → 粘贴合约地址。
+
+Q: performUpkeep 报错 MMC: not authorized
+A: automationForwarder 已绑定，当前调用者不是 Forwarder 或 owner。
+   检查 automation.chain.link 中 Forwarder 地址是否正确，
+   或用 owner 钱包重新运行 set-automation-forwarder.ts。
+
+Q: VRF 报错 gas limit too low / callback failed
+A: 默认 callbackGasLimit 已从 1,000,000 降至 400,000（VRF 回调已是 O(1)，无循环）。
+   若仍失败：GAS_LIMIT=600000 npx hardhat run scripts/set-callback-gas.ts --network sepolia
+   无需重新部署，立即生效。若已卡在 DRAWING 状态，先 emergency-reset 再重试。
+
+Q: demo 等待 VRF 超过 10 分钟
+A: 1. 检查 vrf.chain.link/sepolia：Consumer 是否已添加？LINK 是否充足（≥1 LINK）？
+   2. 运行 emergency-reset.ts 解除卡死，提高 callbackGasLimit 后重试。
+
+Q: 轮次卡在 DRAWING / LOCKED 无法开新游戏
+A: 运行 npx hardhat run scripts/emergency-reset.ts --network sepolia
+   强制结算当前轮次，新一轮自动开启。
+
+Q: 前端显示"No deployment found"
+A: 确认 frontend/lib/addresses.json 中有 "11155111" 的条目。
+   重新运行部署脚本即可自动更新。
+
+Q: 如何给其他测试账户 mint USDC？
+A: MINT_TO=0x目标地址 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+Q: 开奖后奖金为 0
+A: 确保在开奖前有利息累积：
+   1. 自动利息：部署时已设置 2%/分钟利率，5 分钟自动累积约 10%
+   2. 手动注入：YIELD_AMOUNT=50 npx hardhat run scripts/simulate-yield.ts --network sepolia
+
+Q: MetaMask 中看不到 USDC 余额
+A: 需要手动导入代币。MetaMask → Import tokens → 粘贴 MockUSDC 合约地址。
+
+Q: 每轮结束后如何继续参与？（Pull 模式）
+A: 合约使用 Pull 模式，rollover 不再自动执行。每轮结算后用户需主动操作：
+   1. 调用 claimTicket()：将本金 rollover 到新一轮，更新 loyalty，mint 新 NFT
+      → demo.ts 的 STEP 9 会自动调用
+      → 前端 Dashboard 会显示 "Claim Ticket" 按钮
+   2. 调用 claimYield(roundId)：领取上一轮保留的收益（仅 Tier 1/2 用户）
+      → Tier 1 保留 90% 收益，Tier 2 保留 50%，Tier 3 全部进奖池
+      → demo.ts 的 STEP 9 会自动调用（previewClaimYield > 0 时）
+   ⚠ 未调用 claimTicket() 之前，本金仍在合约中（安全），但不参与新一轮抽奖。
+
+Q: 需要重新部署（修改合约后）
+A: 直接重新运行 deploy.ts，addresses.json 自动更新。
+   重新部署后需要：
+   1. 重新添加 VRF Consumer（vrf.chain.link/sepolia）
+   2. 重新注册 Automation Upkeep（automation.chain.link/sepolia）或更新 Target 地址
+   3. 重新运行 set-automation-forwarder.ts 绑定新 Forwarder
+
+Q: 本项目和真实 Aave 的关系是什么？
+A: 本项目使用 MockAave（带自动生息功能）模拟 Aave V3 的存取接口。
+   合约架构（YieldVault → AavePool → aToken）与真实 Aave 完全一致，
+   只需替换地址即可切换到真实 Aave。Chainlink VRF 和 Automation 是真实的。
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+完整部署步骤速查（按顺序执行）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第一阶段：准备工作（浏览器，只需做一次）                       │
+  └─────────────────────────────────────────────────────────────┘
+
+  1. MetaMask 创建测试账户，切换到 Sepolia 网络，导出私钥
+
+  2. 领取测试 ETH + LINK（至少 5 LINK）
+     → https://faucets.chain.link/sepolia
+     → 勾选 ETH 和 LINK → Send request → 等 1-2 分钟到账
+
+  3. 创建 VRF 订阅（已有可跳过）
+     → https://vrf.chain.link/sepolia
+     → Create Subscription → 充入至少 3 LINK → 记录 Subscription ID
+
+  4. 配置 .env 文件（项目根目录 money-money-come/.env）
+     SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
+     SEPOLIA_PRIVATE_KEY=0x你的私钥
+     VRF_SUBSCRIPTION_ID=你的订阅ID
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第二阶段：部署合约（终端）                                    │
+  └─────────────────────────────────────────────────────────────┘
+
+  5. 进入项目目录
+     cd C:\Users\admin\Desktop\FT5004\money-money-come
+
+  6. 部署所有合约到 Sepolia
+     npx hardhat run scripts/deploy.ts --network sepolia
+     → 记录输出中的 MockUSDC 地址和 MoneyMoneyCome 地址
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第三阶段：链上配置（浏览器 + 终端）                           │
+  └─────────────────────────────────────────────────────────────┘
+
+  7. 添加 VRF Consumer（浏览器）
+     → https://vrf.chain.link/sepolia → 找到订阅 → Add Consumer
+     → 粘贴第 6 步的 MoneyMoneyCome 地址 → 确认交易
+
+  8. 注册 Chainlink Automation Upkeep（浏览器）
+     → https://automation.chain.link/sepolia → Register New Upkeep
+     → Custom Logic → 填入 MoneyMoneyCome 地址
+     → Gas limit: 500000，Starting balance: 2 LINK
+     → 确认交易 → 记录 Upkeep ID
+    Upkeep ID：
+
+
+  9. 绑定 Forwarder 到合约（终端）
+     UPKEEP_ID=你的UpkeepID npx hardhat run scripts/set-automation-forwarder.ts --network sepolia
+
+  10. Mint 测试 USDC（终端）
+      npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  11. MetaMask 导入 MockUSDC 代币（浏览器）
+      → MetaMask → Assets → Import tokens
+      → 粘贴第 6 步的 MockUSDC 地址 → Add Custom Token → Import
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第四阶段：启动前端（终端）                                    │
+  └─────────────────────────────────────────────────────────────┘
+
+  12. 安装依赖并启动
+      cd frontend && npm install && npm run dev
+
+  13. 打开浏览器
+      → http://localhost:3000
+      → MetaMask 切换到 Sepolia → 连接钱包
+      → 即可在前端存入 USDC、查看实时利息、等待开奖
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  第五阶段：运行演示（可选，纯命令行演示）                       │
+  └─────────────────────────────────────────────────────────────┘
+
+  14. 一键演示（自动存入 → 模拟收益 → 等 VRF 开奖 → 显示结果）
+      npx hardhat run scripts/demo.ts --network sepolia
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  队友加入（给其他人 mint USDC）                                │
+  └─────────────────────────────────────────────────────────────┘
+
+  15. 队友领取 Sepolia ETH（自行操作）
+      → https://faucets.chain.link/sepolia
+
+  16. 部署者给队友 mint USDC
+      MINT_TO=0x队友地址 MINT_AMOUNT=1000 npx hardhat run scripts/mint-usdc.ts --network sepolia
+
+  17. 队友在 MetaMask 中 Import Token（MockUSDC 地址）
+
+  18. 队友获取 frontend/lib/addresses.json，本地 npm run dev 即可
+
+==========================================
